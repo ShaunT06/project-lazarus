@@ -6,19 +6,32 @@ immediately - real processing (diagnosis -> strategy -> agent) is handed to
 a background task so Razorpay's delivery timeout is never in the critical
 path.
 
-NOTE: full pipeline wiring (state serialization / CaseContext hydration
-from the payload) is a later PR - this one is scoped to receipt,
-verification, and idempotency, matching plan.md's phase split.
+Scope note: only `payment.failed` events feed the agent pipeline right
+now. True checkout abandonment (a cart with no payment attempt at all)
+isn't a Razorpay webhook event - it needs separate session/client-side
+tracking, not yet built. B2B receivables are synthetic and never arrive
+via webhook. Field extraction from the payment entity (customer_id,
+error_reason) is a best-effort mapping - reconcile against real webhook
+payloads before the batch run.
 """
 
 import hashlib
 import hmac
 import json
+from collections.abc import Callable
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
 
+from app.agent import run_case
 from app.audit import AuditLogger
+from app.customer_store import CustomerStore
+from app.diagnosis import diagnose
+from app.models import CaseContext
+from app.strategy import StrategyEngine
 from app.webhook_store import WebhookEventStore
+
+_OUTREACH_TOOLS = {"send_message", "generate_payment_link", "generate_split_payment_link"}
 
 
 def verify_signature(raw_body: bytes, signature: str, secret: str) -> bool:
@@ -26,12 +39,103 @@ def verify_signature(raw_body: bytes, signature: str, secret: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
-def _process_event(event_id: str, payload: dict, audit: AuditLogger) -> None:
-    audit.log(event_id, "webhook_processed", {"event": payload.get("event")})
+def _extract_case_context(
+    event_id: str, payload: dict, customer_store: CustomerStore
+) -> CaseContext | None:
+    entity = payload.get("payload", {}).get("payment", {}).get("entity")
+    if not entity:
+        return None
+
+    customer_id = (
+        entity.get("customer_id")
+        or entity.get("email")
+        or entity.get("contact")
+        or entity.get("id")
+    )
+    if not customer_id:
+        return None
+
+    error_code = entity.get("error_reason") or entity.get("error_code")
+    amount_inr = (entity.get("amount") or 0) / 100  # Razorpay amounts are in paise
+
+    customer_store.record_abandon_event(customer_id)
+    profile = customer_store.get_profile(customer_id)
+
+    return CaseContext(
+        case_id=event_id,
+        customer_id=customer_id,
+        customer_ltv_inr=profile["ltv_inr"],
+        abandons_last_7d=customer_store.abandons_last_7d(customer_id),
+        marketing_opt_in=profile["marketing_opt_in"],
+        hours_since_last_outreach=customer_store.hours_since_last_outreach(customer_id),
+        error_code=error_code,
+        cart_amount_inr=amount_inr,
+        category="subscription_failure",
+        is_synthetic=False,
+    )
+
+
+def _process_event(
+    event_id: str,
+    payload: dict,
+    *,
+    audit: AuditLogger,
+    customer_store: CustomerStore,
+    strategy_engine: StrategyEngine,
+    openrouter_client_factory: Callable[[], Any],
+    max_gate_corrections: int,
+    notify_channel: str,
+) -> None:
+    event_type = payload.get("event")
+    if event_type != "payment.failed":
+        audit.log(event_id, "event_type_not_handled", {"event": event_type})
+        return
+
+    try:
+        case = _extract_case_context(event_id, payload, customer_store)
+        if case is None:
+            audit.log(
+                event_id,
+                "pipeline_skipped",
+                {"reason": "could not extract case context from payload"},
+            )
+            return
+
+        cause_category = diagnose(case.error_code)
+        case.extra["cause_category"] = cause_category
+        strategy_result = strategy_engine.evaluate(case)
+
+        client = openrouter_client_factory()
+        try:
+            result = run_case(
+                case,
+                cause_category,
+                strategy_result,
+                client,
+                audit,
+                max_corrections=max_gate_corrections,
+                notify_channel=notify_channel,
+            )
+        finally:
+            client.close()
+
+        if any(a["tool"] in _OUTREACH_TOOLS for a in result.actions):
+            customer_store.record_outreach_event(case.customer_id)
+
+    except Exception as exc:  # background task boundary - must not fail silently
+        audit.log(event_id, "pipeline_error", {"error": str(exc)})
 
 
 def build_webhook_router(
-    *, store: WebhookEventStore, audit: AuditLogger, webhook_secret: str
+    *,
+    store: WebhookEventStore,
+    audit: AuditLogger,
+    webhook_secret: str,
+    customer_store: CustomerStore,
+    strategy_engine: StrategyEngine,
+    openrouter_client_factory: Callable[[], Any],
+    max_gate_corrections: int = 3,
+    notify_channel: str = "console",
 ) -> APIRouter:
     router = APIRouter()
 
@@ -66,7 +170,17 @@ def build_webhook_router(
         audit.log(event_id, "webhook_received", {"event": payload.get("event"), "is_new": is_new})
 
         if is_new:
-            background_tasks.add_task(_process_event, event_id, payload, audit)
+            background_tasks.add_task(
+                _process_event,
+                event_id,
+                payload,
+                audit=audit,
+                customer_store=customer_store,
+                strategy_engine=strategy_engine,
+                openrouter_client_factory=openrouter_client_factory,
+                max_gate_corrections=max_gate_corrections,
+                notify_channel=notify_channel,
+            )
 
         return {"status": "ok", "duplicate": not is_new}
 

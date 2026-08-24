@@ -30,7 +30,8 @@ aspirational.
 | Strategy config engine | Done — hard_stops → rules → defaults |
 | Decision agent (OpenRouter) | Done — capped reject-and-correct loop |
 | Policy gate | Done — action/discount/retry/cooldown + message-body scan |
-| Webhook → agent pipeline wiring | Not started — webhook currently only logs receipt |
+| Webhook → agent pipeline wiring | Done — `payment.failed` only; checkout abandonment needs separate tracking (not built) |
+| Customer history store (LTV, abandon count, cooldown) | Done, SQLite — LTV/opt-in are placeholders pending real CRM backfill |
 | WhatsApp delivery | Not started — `console` channel is the default |
 | B2B receivables records | Synthetic by design (see plan §8) |
 
