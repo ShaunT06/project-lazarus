@@ -8,7 +8,11 @@ class Settings(BaseSettings):
 
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "anthropic/claude-sonnet-5"
+    # Free-tier only, per explicit instruction - no paid model or API usage.
+    # Verify current free + tool-capable models via GET /api/v1/models
+    # (pricing.prompt == "0" and "tools" in supported_parameters) before
+    # changing this, since OpenRouter's free lineup rotates.
+    openrouter_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
 
     razorpay_key_id: str = ""
     razorpay_key_secret: str = ""
