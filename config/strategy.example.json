@@ -1,0 +1,96 @@
+{
+  "$comment": "Merchant-authored recovery policy. Evaluation order: hard_stops -> rules (first match wins) -> defaults. The decision agent NEVER sees this file; it only receives the resolved output (allowed_actions + bounds).",
+  "version": "1.0",
+  "merchant_id": "acme_test",
+
+  "hard_stops": [
+    {
+      "id": "abandon_fatigue",
+      "when": { "abandons_last_7d": { "gte": 3 } },
+      "reason": "Third abandonment this week — stop outreach, do not contact."
+    },
+    {
+      "id": "opted_out",
+      "when": { "marketing_opt_in": { "eq": false } },
+      "reason": "Customer has not opted in to outreach."
+    },
+    {
+      "id": "cooldown_active",
+      "when": { "hours_since_last_outreach": { "lt": 24 } },
+      "reason": "Within cooldown window for this customer."
+    }
+  ],
+
+  "rules": [
+    {
+      "id": "high_ltv_insufficient_funds",
+      "when": {
+        "cause_category": ["insufficient_funds"],
+        "customer_ltv_inr": { "gte": 25000 }
+      },
+      "allow": {
+        "max_discount_pct": 5,
+        "max_retries": 2,
+        "cooldown_hours": 24,
+        "allowed_actions": [
+          "send_message",
+          "generate_payment_link",
+          "generate_split_payment_link",
+          "schedule_retry"
+        ]
+      }
+    },
+    {
+      "id": "transient_decline_any_customer",
+      "when": {
+        "cause_category": ["issuer_down", "network_error", "gateway_timeout"]
+      },
+      "allow": {
+        "max_discount_pct": 0,
+        "max_retries": 3,
+        "cooldown_hours": 1,
+        "allowed_actions": ["schedule_retry", "send_message", "generate_payment_link"]
+      }
+    },
+    {
+      "id": "card_problem",
+      "when": {
+        "cause_category": ["expired_card", "card_declined", "invalid_card"]
+      },
+      "allow": {
+        "max_discount_pct": 0,
+        "max_retries": 0,
+        "cooldown_hours": 24,
+        "allowed_actions": ["send_message", "generate_payment_link"]
+      }
+    },
+    {
+      "id": "checkout_abandonment_first_time",
+      "when": {
+        "cause_category": ["abandoned_checkout"],
+        "abandons_last_7d": { "lte": 1 }
+      },
+      "allow": {
+        "max_discount_pct": 3,
+        "max_retries": 0,
+        "cooldown_hours": 24,
+        "allowed_actions": ["send_message", "generate_payment_link"]
+      }
+    }
+  ],
+
+  "defaults": {
+    "max_discount_pct": 0,
+    "max_retries": 1,
+    "cooldown_hours": 48,
+    "allowed_actions": ["send_message"]
+  },
+
+  "global_limits": {
+    "$comment": "Enforced by the policy gate regardless of which rule matched.",
+    "max_outreach_per_customer_per_week": 2,
+    "max_discount_pct_absolute": 10,
+    "max_gate_corrections": 3,
+    "on_corrections_exhausted": "fallback_to_default_action"
+  }
+}
