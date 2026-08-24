@@ -1,0 +1,57 @@
+[
+  {
+    "case_id": "sub_001",
+    "customer_id": "cust_high_ltv_01",
+    "customer_ltv_inr": 32000,
+    "abandons_last_7d": 0,
+    "hours_since_last_outreach": 999,
+    "error_code": "insufficient_funds",
+    "cart_amount_inr": 1499,
+    "category": "subscription_failure",
+    "is_synthetic": false
+  },
+  {
+    "case_id": "sub_002",
+    "customer_id": "cust_low_ltv_02",
+    "customer_ltv_inr": 4000,
+    "abandons_last_7d": 1,
+    "hours_since_last_outreach": 999,
+    "error_code": "expired_card",
+    "cart_amount_inr": 899,
+    "category": "subscription_failure",
+    "is_synthetic": false
+  },
+  {
+    "case_id": "checkout_001",
+    "customer_id": "cust_new_03",
+    "customer_ltv_inr": 0,
+    "abandons_last_7d": 0,
+    "hours_since_last_outreach": 999,
+    "error_code": null,
+    "cart_amount_inr": 2599,
+    "category": "checkout_abandonment",
+    "is_synthetic": false
+  },
+  {
+    "case_id": "checkout_fatigue_001",
+    "customer_id": "cust_fatigued_04",
+    "customer_ltv_inr": 6000,
+    "abandons_last_7d": 3,
+    "hours_since_last_outreach": 5,
+    "error_code": null,
+    "cart_amount_inr": 1200,
+    "category": "checkout_abandonment",
+    "is_synthetic": false
+  },
+  {
+    "case_id": "receivable_001",
+    "customer_id": "biz_partner_05",
+    "customer_ltv_inr": 150000,
+    "abandons_last_7d": 0,
+    "hours_since_last_outreach": 999,
+    "error_code": "gateway_error",
+    "cart_amount_inr": 85000,
+    "category": "receivable",
+    "is_synthetic": true
+  }
+]
