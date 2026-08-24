@@ -24,7 +24,7 @@ aspirational.
 | Component | Status |
 |---|---|
 | Razorpay webhook receipt + signature verification + idempotency | Done — SQLite-backed dedupe, survives restart |
-| Razorpay test-mode orders | Not started |
+| Razorpay test-mode orders | Done — `scripts/create_razorpay_orders.py`, real orders via the live test API |
 | State serialization / checkout hydration | Not started |
 | Error diagnosis engine | Done — deterministic, unmapped codes fall to `unknown`, no code at all means `abandoned_checkout` |
 | Strategy config engine | Done — hard_stops → rules → defaults, includes a B2B receivables rule |
@@ -32,7 +32,7 @@ aspirational.
 | Policy gate | Done — action/discount/retry/cooldown + message-body scan |
 | Webhook → agent pipeline wiring | Done — `payment.failed` only; checkout abandonment needs separate tracking (not built) |
 | Customer history store (LTV, abandon count, cooldown) | Done, SQLite — LTV/opt-in are placeholders pending real CRM backfill |
-| 50-record batch (`data/batch_cases.json`) | **Synthetic** — 20 subscription-failure / 15 checkout-abandonment / 15 receivable, all `is_synthetic: true`. Plan §8 called for the first two categories to come from real Razorpay test-mode orders; that needs `RAZORPAY_KEY_ID`/`SECRET`, not yet supplied. Swapping in real orders later is a drop-in replacement of this file — `scripts/run_batch.py` doesn't change. |
+| 50-record batch (`data/batch_cases.json`) | 20 subscription-failure / 15 checkout-abandonment / 15 receivable. **checkout-abandonment** is now fully real (`is_synthetic: false`) — real test-mode orders, genuinely left unpaid, exactly as plan §8 specifies. **subscription-failure** stays `is_synthetic: true` — the order is real but the failure event is still modeled (Razorpay's test mode has no server-only way to force a card decline outside the checkout.js/browser flow; plan §8 itself specifies "orders + modeled failure events"). **receivable** stays fully synthetic by design. |
 | Batch runner (`scripts/run_batch.py`) | Done — `--dry-run` resolves diagnosis+strategy only (no API key, no cost); full run needs `OPENROUTER_API_KEY` |
 | WhatsApp delivery | Not started — `console` channel is the default |
 
