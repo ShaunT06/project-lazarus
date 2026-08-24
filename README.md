@@ -26,14 +26,15 @@ aspirational.
 | Razorpay webhook receipt + signature verification + idempotency | Done — SQLite-backed dedupe, survives restart |
 | Razorpay test-mode orders | Not started |
 | State serialization / checkout hydration | Not started |
-| Error diagnosis engine | Done — deterministic, unmapped codes fall to `unknown` |
-| Strategy config engine | Done — hard_stops → rules → defaults |
-| Decision agent (OpenRouter) | Done — capped reject-and-correct loop |
+| Error diagnosis engine | Done — deterministic, unmapped codes fall to `unknown`, no code at all means `abandoned_checkout` |
+| Strategy config engine | Done — hard_stops → rules → defaults, includes a B2B receivables rule |
+| Decision agent (OpenRouter) | Done — capped reject-and-correct loop. Untested against the *live* OpenRouter API — no key configured yet, only against a scripted fake client |
 | Policy gate | Done — action/discount/retry/cooldown + message-body scan |
 | Webhook → agent pipeline wiring | Done — `payment.failed` only; checkout abandonment needs separate tracking (not built) |
 | Customer history store (LTV, abandon count, cooldown) | Done, SQLite — LTV/opt-in are placeholders pending real CRM backfill |
+| 50-record batch (`data/batch_cases.json`) | **Synthetic** — 20 subscription-failure / 15 checkout-abandonment / 15 receivable, all `is_synthetic: true`. Plan §8 called for the first two categories to come from real Razorpay test-mode orders; that needs `RAZORPAY_KEY_ID`/`SECRET`, not yet supplied. Swapping in real orders later is a drop-in replacement of this file — `scripts/run_batch.py` doesn't change. |
+| Batch runner (`scripts/run_batch.py`) | Done — `--dry-run` resolves diagnosis+strategy only (no API key, no cost); full run needs `OPENROUTER_API_KEY` |
 | WhatsApp delivery | Not started — `console` channel is the default |
-| B2B receivables records | Synthetic by design (see plan §8) |
 
 ## Quick start
 
