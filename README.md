@@ -28,7 +28,7 @@ aspirational.
 | State serialization / checkout hydration | Not started |
 | Error diagnosis engine | Done — deterministic, unmapped codes fall to `unknown`, no code at all means `abandoned_checkout` |
 | Strategy config engine | Done — hard_stops → rules → defaults, includes a B2B receivables rule |
-| Decision agent (OpenRouter) | Done — capped reject-and-correct loop. Untested against the *live* OpenRouter API — no key configured yet, only against a scripted fake client |
+| Decision agent (OpenRouter) | Done — capped reject-and-correct loop, live-verified against a free tool-calling model (`nvidia/nemotron-3-super-120b-a12b:free`). **Free-tier only, by explicit project policy** — no paid model or API usage. OpenRouter's free tier shares one account-wide cap (observed: 50 requests/day across *all* free models combined, not per-model), so a full 50-case batch run spans roughly 2 daily quota windows at ~1.9 calls/case. `scripts/run_batch.py` resumes automatically — a quota-exhausted run picks back up where it left off once the daily reset hits, without re-spending calls on cases that already succeeded. |
 | Policy gate | Done — action/discount/retry/cooldown + message-body scan |
 | Webhook → agent pipeline wiring | Done — `payment.failed` only; checkout abandonment needs separate tracking (not built) |
 | Customer history store (LTV, abandon count, cooldown) | Done, SQLite — LTV/opt-in are placeholders pending real CRM backfill |
