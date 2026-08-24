@@ -30,3 +30,6 @@ logs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local agent/tooling state
+.claude/

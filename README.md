@@ -23,13 +23,14 @@ aspirational.
 
 | Component | Status |
 |---|---|
-| Razorpay webhook receipt + signature verification | Not started |
+| Razorpay webhook receipt + signature verification + idempotency | Done — SQLite-backed dedupe, survives restart |
 | Razorpay test-mode orders | Not started |
 | State serialization / checkout hydration | Not started |
-| Error diagnosis engine | Not started |
-| Strategy config engine | Not started |
-| Decision agent (OpenRouter) | Not started |
-| Policy gate | Not started |
+| Error diagnosis engine | Done — deterministic, unmapped codes fall to `unknown` |
+| Strategy config engine | Done — hard_stops → rules → defaults |
+| Decision agent (OpenRouter) | Done — capped reject-and-correct loop |
+| Policy gate | Done — action/discount/retry/cooldown + message-body scan |
+| Webhook → agent pipeline wiring | Not started — webhook currently only logs receipt |
 | WhatsApp delivery | Not started — `console` channel is the default |
 | B2B receivables records | Synthetic by design (see plan §8) |
 

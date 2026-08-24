@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str = "anthropic/claude-sonnet-5"
 
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
+
     strategy_config_path: Path = Path("config/strategy.example.json")
     max_gate_corrections: int = 3
     notify_channel: str = "console"
