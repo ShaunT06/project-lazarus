@@ -22,6 +22,7 @@ venv/
 dump.rdb
 data/runs/
 data/*.jsonl
+data/batch_results.json
 !data/.gitkeep
 logs/
 

@@ -68,6 +68,7 @@
       "id": "checkout_abandonment_first_time",
       "when": {
         "cause_category": ["abandoned_checkout"],
+        "category": ["checkout_abandonment"],
         "abandons_last_7d": { "lte": 1 }
       },
       "allow": {
@@ -75,6 +76,18 @@
         "max_retries": 0,
         "cooldown_hours": 24,
         "allowed_actions": ["send_message", "generate_payment_link"]
+      }
+    },
+    {
+      "id": "b2b_receivable_split_payment",
+      "when": {
+        "category": ["receivable"]
+      },
+      "allow": {
+        "max_discount_pct": 0,
+        "max_retries": 0,
+        "cooldown_hours": 72,
+        "allowed_actions": ["send_message", "generate_split_payment_link", "update_customer_record"]
       }
     }
   ],

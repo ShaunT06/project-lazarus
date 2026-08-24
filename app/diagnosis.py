@@ -22,14 +22,18 @@ _ERROR_REASON_MAP: dict[str, str] = {
 }
 
 UNKNOWN_CAUSE = "unknown"
+ABANDONED_CHECKOUT = "abandoned_checkout"
 
 
 def diagnose(error_code: str | None) -> str:
     """Map a Razorpay error reason/code to a cause_category.
 
-    Returns UNKNOWN_CAUSE for unmapped or missing codes rather than raising -
-    an unrecognized code is a data-quality fact worth logging, not a crash.
+    No error_code at all means no payment was ever attempted - that's a
+    genuine cart abandonment, not an unrecognized failure, so it maps to
+    ABANDONED_CHECKOUT. A *present* but unmapped code falls to UNKNOWN_CAUSE
+    instead of raising - an unrecognized code is a data-quality fact worth
+    logging, not a crash.
     """
     if not error_code:
-        return UNKNOWN_CAUSE
+        return ABANDONED_CHECKOUT
     return _ERROR_REASON_MAP.get(error_code.strip().lower(), UNKNOWN_CAUSE)

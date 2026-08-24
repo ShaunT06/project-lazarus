@@ -46,3 +46,33 @@ def test_unmatched_case_falls_back_to_defaults(engine: StrategyEngine):
     result = engine.evaluate(case)
     assert result.matched_rule_id == "__default__"
     assert result.allowed_actions == ["send_message"]
+
+
+def test_first_time_checkout_abandonment_gets_discount_room(engine: StrategyEngine):
+    case = CaseContext(
+        case_id="c5",
+        customer_id="u5",
+        category="checkout_abandonment",
+        abandons_last_7d=1,
+        extra={"cause_category": "abandoned_checkout"},
+    )
+    result = engine.evaluate(case)
+    assert result.matched_rule_id == "checkout_abandonment_first_time"
+    assert result.max_discount_pct == 3
+
+
+def test_receivable_gets_split_payment_not_checkout_rule(engine: StrategyEngine):
+    # Receivables have no error_code either, so cause_category also resolves
+    # to abandoned_checkout - the category filter must keep this from
+    # matching checkout_abandonment_first_time instead of the B2B rule.
+    case = CaseContext(
+        case_id="c6",
+        customer_id="u6",
+        category="receivable",
+        abandons_last_7d=0,
+        extra={"cause_category": "abandoned_checkout"},
+    )
+    result = engine.evaluate(case)
+    assert result.matched_rule_id == "b2b_receivable_split_payment"
+    assert "generate_split_payment_link" in result.allowed_actions
+    assert "generate_payment_link" not in result.allowed_actions
