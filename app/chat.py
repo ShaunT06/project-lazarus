@@ -28,6 +28,7 @@ from app.conversation_store import ConversationStore, TursoConversationStore
 from app.customer_store import CustomerStore, TursoCustomerStore
 from app.diagnosis import diagnose
 from app.models import CaseContext
+from app.openrouter_client import QuotaExhausted
 from app.strategy import StrategyEngine
 from app.strategy_store import StrategyConfigStore, TursoStrategyConfigStore
 
@@ -37,6 +38,22 @@ _LLM_UNAVAILABLE_MESSAGE = (
     "The diagnosis and strategy bounds for this case were still computed "
     "deterministically; try sending a message again in a moment."
 )
+
+
+def _llm_error_detail(exc: Exception) -> str:
+    """QuotaExhausted gets a specific, accurate message (the daily cap
+    resets once a day, not "in a moment") - anything else (a transient
+    network/provider hiccup) gets the generic retry-soon message."""
+    if isinstance(exc, QuotaExhausted):
+        when = exc.reset_at.strftime("%H:%M UTC") if exc.reset_at else "the next daily reset"
+        return (
+            "Lazarus has hit OpenRouter's free-tier daily quota (shared across the whole "
+            f"project) - it won't recover until {when}, so retrying now won't help. The "
+            "diagnosis and strategy bounds for this case were still computed "
+            "deterministically; only the agent's negotiation is unavailable right now."
+        )
+    return _LLM_UNAVAILABLE_MESSAGE
+
 
 SCENARIOS: list[dict[str, Any]] = [
     {
@@ -217,7 +234,7 @@ def build_chat_router(
                 )
             except Exception as exc:
                 audit.log(case_id, "pipeline_error", {"error": str(exc)})
-                raise HTTPException(status_code=503, detail=_LLM_UNAVAILABLE_MESSAGE) from exc
+                raise HTTPException(status_code=503, detail=_llm_error_detail(exc)) from exc
         finally:
             client.close()
 
@@ -287,7 +304,7 @@ def build_chat_router(
                 )
             except Exception as exc:
                 audit.log(case_id, "pipeline_error", {"error": str(exc)})
-                raise HTTPException(status_code=503, detail=_LLM_UNAVAILABLE_MESSAGE) from exc
+                raise HTTPException(status_code=503, detail=_llm_error_detail(exc)) from exc
         finally:
             client.close()
 
