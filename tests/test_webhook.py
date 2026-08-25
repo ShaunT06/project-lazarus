@@ -18,6 +18,7 @@ def make_client(tmp_path, secret: str = SECRET) -> TestClient:
         webhook_secret=secret,
         db_path=tmp_path / "events.db",
         audit_path=tmp_path / "audit.jsonl",
+        database_url="",  # hermetic: never redirected by a developer's local .env
     )
     return TestClient(app)
 
@@ -58,11 +59,15 @@ def test_dedupe_survives_process_restart(tmp_path):
     body = json.dumps({"id": "evt_3", "event": "payment.failed"}).encode()
     headers = {"X-Razorpay-Signature": sign(body), "x-razorpay-event-id": "evt_3"}
 
-    app1 = create_app(webhook_secret=SECRET, db_path=db_path, audit_path=audit_path)
+    app1 = create_app(
+        webhook_secret=SECRET, db_path=db_path, audit_path=audit_path, database_url=""
+    )
     TestClient(app1).post("/webhooks/razorpay", content=body, headers=headers)
 
     # Fresh app instance, same on-disk db - simulates a redeploy/crash-restart.
-    app2 = create_app(webhook_secret=SECRET, db_path=db_path, audit_path=audit_path)
+    app2 = create_app(
+        webhook_secret=SECRET, db_path=db_path, audit_path=audit_path, database_url=""
+    )
     resp = TestClient(app2).post("/webhooks/razorpay", content=body, headers=headers)
 
     assert resp.json()["duplicate"] is True

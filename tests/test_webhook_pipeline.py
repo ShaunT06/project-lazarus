@@ -89,6 +89,7 @@ def make_client(tmp_path, responses: list[LLMResponse] | None = None) -> tuple[T
         customer_db_path=tmp_path / "customers.db",
         strategy_config_path=STRATEGY_CONFIG,
         openrouter_client_factory=FakeOpenRouterClient,
+        database_url="",  # hermetic: never redirected by a developer's local .env
     )
     return TestClient(app), tmp_path / "audit.jsonl"
 
