@@ -1,6 +1,8 @@
-# Vercel's Python builder installs from this file - keep it in sync with
-# pyproject.toml's [project.dependencies] (runtime deps only, no dev/test
-# tooling; Vercel never runs pytest/ruff).
+# Vercel's production build actually installs from pyproject.toml directly
+# (via uv) - this file is for `vercel dev`/local Vercel-flavored dev per
+# Vercel's FastAPI framework docs. Keep it in sync with pyproject.toml's
+# [project.dependencies] regardless (runtime deps only, no dev/test tooling;
+# neither path runs pytest/ruff).
 fastapi>=0.115
 uvicorn[standard]>=0.32
 pydantic>=2.9

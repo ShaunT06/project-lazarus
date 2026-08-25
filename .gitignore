@@ -34,3 +34,5 @@ Thumbs.db
 
 # Local agent/tooling state
 .claude/
+.vercel
+.env*
