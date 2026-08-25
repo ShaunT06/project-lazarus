@@ -8,6 +8,7 @@ plan.md section 3 (model swap should be a config change, not a rewrite).
 import json
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -27,6 +28,18 @@ class LLMResponse:
     content: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw_message: dict[str, Any] = field(default_factory=dict)
+
+
+class QuotaExhausted(RuntimeError):
+    """The free-tier *daily* cap is spent (X-RateLimit-Remaining: 0) - not a
+    transient burst limit. Retrying with backoff cannot help here (the cap
+    resets once a day, not in seconds), so the caller should fail fast
+    instead of sitting through several rounds of pointless retries."""
+
+    def __init__(self, reset_at: datetime | None):
+        self.reset_at = reset_at
+        when = reset_at.strftime("%H:%M UTC") if reset_at else "the next daily reset"
+        super().__init__(f"OpenRouter free-tier daily quota exhausted, resets at {when}")
 
 
 class OpenRouterClient:
@@ -73,12 +86,24 @@ class OpenRouterClient:
         # occasionally return HTTP 200 with a malformed/error body instead of
         # a real completion (a transient upstream provider hiccup, not a
         # client bug) - retry both cases with backoff instead of failing a
-        # whole batch run on one flaky call.
+        # whole batch run on one flaky call. The one 429 that must NOT be
+        # retried is the daily cap (X-RateLimit-Remaining: 0) - it resets
+        # once a day, not within a few backoff cycles, so retrying it just
+        # makes a chat request hang for ~30s before failing anyway; fail
+        # immediately instead, with the actual reset time.
         data: dict[str, Any] = {}
         for attempt in range(max_retries + 1):
             resp = self._client.post("/chat/completions", headers=headers, json=body)
 
             if resp.status_code == 429:
+                if resp.headers.get("X-RateLimit-Remaining") == "0":
+                    reset_header = resp.headers.get("X-RateLimit-Reset")
+                    reset_at = (
+                        datetime.fromtimestamp(int(reset_header) / 1000, tz=UTC)
+                        if reset_header
+                        else None
+                    )
+                    raise QuotaExhausted(reset_at)
                 if attempt == max_retries:
                     resp.raise_for_status()
                 retry_after = float(resp.headers.get("Retry-After", 2 * (attempt + 1)))
