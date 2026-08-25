@@ -22,5 +22,11 @@ class Settings(BaseSettings):
     max_gate_corrections: int = 3
     notify_channel: str = "console"
 
+    # When set (Vercel deploy), all stores switch to Postgres (Neon) since
+    # the serverless filesystem is read-only/ephemeral - SQLite files and
+    # audit.jsonl do not survive between invocations there. Unset (local
+    # dev, tests) keeps the original zero-dependency SQLite/JSONL path.
+    database_url: str = ""
+
 
 settings = Settings()

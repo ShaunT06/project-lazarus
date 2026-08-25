@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lazarus - Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #11161d;
+    --panel-2: #161d26;
+    --border: #232b36;
+    --text: #e6edf3;
+    --text-dim: #8b98a5;
+    --accent: #5b8cff;
+    --accent-dim: #1a2540;
+    --ok: #3ddc97;
+    --ok-dim: #123328;
+    --warn: #ffb454;
+    --warn-dim: #3a2a10;
+    --danger: #ff6b6b;
+    --danger-dim: #2a1518;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+  header .brand { display: flex; align-items: center; gap: 10px; }
+  header .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .sub { font-size: 12px; color: var(--text-dim); }
+  header nav a { margin-left: 14px; font-size: 13px; text-decoration: none; color: var(--text-dim); border: 1px solid var(--border); padding: 5px 10px; border-radius: 6px; }
+  header nav a.chatlink { color: var(--text); }
+  header nav a:hover { color: var(--text); border-color: var(--accent); }
+
+  .tabs { display: flex; gap: 4px; padding: 12px 24px 0; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .tab { padding: 9px 16px; font-size: 13px; color: var(--text-dim); cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+  main { padding: 22px 24px 60px; max-width: 1180px; margin: 0 auto; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .stat .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+  .stat .value { font-size: 22px; font-weight: 700; }
+  .stat .value.ok { color: var(--ok); }
+  .stat .value.warn { color: var(--warn); }
+  .stat .value.danger { color: var(--danger); }
+  .stat .footnote { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 20px; overflow: hidden; }
+  .panel h2 { font-size: 13px; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel-2); font-weight: 600; }
+  .panel-body { padding: 14px 16px; }
+  .honest { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: var(--panel-2); }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+  .badge.actioned, .badge.tool_approved_executed { background: var(--ok-dim); color: var(--ok); }
+  .badge.hard_stop { background: var(--danger-dim); color: var(--danger); }
+  .badge.no_action { background: var(--warn-dim); color: var(--warn); }
+  .badge.gate_exhausted, .badge.tool_rejected { background: var(--danger-dim); color: var(--danger); }
+
+  #liveEmpty { color: var(--text-dim); font-size: 13px; padding: 20px 0; text-align: center; }
+
+  .drawer-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 20; }
+  .drawer-backdrop.open { display: block; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 92vw); background: var(--panel); border-left: 1px solid var(--border); z-index: 21; overflow-y: auto; transform: translateX(100%); transition: transform .2s ease; }
+  .drawer.open { transform: translateX(0); }
+  .drawer header { position: sticky; top: 0; }
+  .drawer .close { cursor: pointer; font-size: 20px; color: var(--text-dim); background: none; border: none; }
+  .drawer .close:hover { color: var(--text); }
+  .drawer .content { padding: 16px 20px; }
+  .drawer-sub-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .drawer-sub-tab { font-size: 12px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--text-dim); }
+  .drawer-sub-tab.active { color: var(--text); border-color: var(--accent); }
+
+  .transcript-msg { padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+  .transcript-msg .role { font-size: 10px; text-transform: uppercase; color: var(--text-dim); letter-spacing: .04em; }
+  .transcript-msg.gate_rejected { color: var(--danger); }
+
+  .audit-event { padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .audit-event .head { display: flex; justify-content: space-between; color: var(--text-dim); margin-bottom: 4px; }
+  .audit-event .etype { color: var(--accent); font-weight: 600; }
+  .audit-event pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11px; color: var(--text-dim); background: var(--panel-2); padding: 8px; border-radius: 6px; }
+
+  #strategyEditor { width: 100%; min-height: 420px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: "SF Mono", Consolas, monospace; font-size: 12.5px; line-height: 1.5; resize: vertical; }
+  .strategy-actions { display: flex; gap: 10px; margin-top: 10px; align-items: center; }
+  .btn { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  #strategyStatus { font-size: 12px; color: var(--text-dim); }
+  #strategyStatus.ok { color: var(--ok); }
+  #strategyStatus.err { color: var(--danger); }
+
+  .refresh-note { font-size: 11px; color: var(--text-dim); text-align: right; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="dot"></div>
+    <div>
+      <h1>Lazarus Dashboard</h1>
+      <div class="sub">Auditing every decision the agent makes</div>
+    </div>
+  </div>
+  <nav>
+    <a class="chatlink" href="/chat">Open customer chat &rarr;</a>
+  </nav>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-view="overview">Overview</div>
+  <div class="tab" data-view="batch">Batch run (50 cases)</div>
+  <div class="tab" data-view="live">Live cases</div>
+  <div class="tab" data-view="feed">Activity feed</div>
+  <div class="tab" data-view="strategy">Strategy config</div>
+</div>
+
+<main>
+  <div class="view active" id="view-overview">
+    <div class="stat-grid" id="overviewStats"></div>
+    <div class="panel">
+      <h2>What "revenue recovered" means here</h2>
+      <div class="panel-body honest">
+        The batch tab reports the completed 50-case run: a real diagnosis &rarr; strategy &rarr;
+        agent &rarr; policy-gate pipeline ran for every case, but no live customer clicked a link
+        in that run, so it measures <b>recovery-attempt rate</b>, not rupees actually recovered.
+        The live tab is different: every case there was created by an actual person (you, a judge)
+        clicking through the chat UI just now - the agent's decisions, the gate's rejections, and
+        the discount it offered are all real actions taken this session, gated exactly as they
+        would be in production.
+      </div>
+    </div>
+  </div>
+
+  <div class="view" id="view-batch">
+    <div class="stat-grid" id="batchStats"></div>
+    <div class="panel">
+      <h2>By category</h2>
+      <div class="panel-body"><table id="batchCategoryTable"></table></div>
+    </div>
+    <div class="panel">
+      <h2>All 50 cases</h2>
+      <div class="panel-body" style="max-height:420px;overflow-y:auto;">
+        <table id="batchCasesTable">
+          <thead><tr><th>Case</th><th>Category</th><th>Cause</th><th>Rule matched</th><th>Outcome</th><th>Cart (₹)</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="view" id="view-live">
+    <div class="stat-grid" id="liveStats"></div>
+    <div class="panel">
+      <h2>Cases from the customer chat UI</h2>
+      <div class="panel-body">
+        <div class="refresh-note">Auto-refreshes every 4s &middot; click a row for the full audit trail + transcript</div>
+        <div id="liveEmpty">No live cases yet - open <a href="/chat">/chat</a> and simulate a failure.</div>
+        <table id="liveCasesTable" style="display:none">
+          <thead><tr><th>Case</th><th>Category</th><th>Cause</th><th>Rule matched</th><th>Status</th><th>Cart (₹)</th><th>Updated</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="view" id="view-feed">
+    <div class="panel">
+      <h2>Recent decisions across all live cases</h2>
+      <div class="panel-body">
+        <div class="refresh-note">Auto-refreshes every 4s</div>
+        <div id="feedList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="view" id="view-strategy">
+    <div class="panel">
+      <h2>Merchant strategy config (the fence)</h2>
+      <div class="panel-body">
+        <p class="honest">This is the same file the policy gate checks every proposed tool call
+          against. Edit it and save - the very next case (batch replay excluded) evaluates
+          against the new bounds immediately, no redeploy. The agent never sees this file
+          directly, only the resolved allowed_actions/max_discount_pct/etc. for its case.</p>
+        <textarea id="strategyEditor" spellcheck="false"></textarea>
+        <div class="strategy-actions">
+          <button class="btn" id="saveStrategyBtn">Save &amp; apply</button>
+          <button class="btn secondary" id="reloadStrategyBtn">Reload from server</button>
+          <span id="strategyStatus"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<div class="drawer" id="drawer">
+  <header>
+    <div>
+      <h1 id="drawerTitle" style="font-size:14px">Case</h1>
+      <div class="sub" id="drawerSub"></div>
+    </div>
+    <button class="close" id="drawerClose">&times;</button>
+  </header>
+  <div class="content">
+    <div class="drawer-sub-tabs">
+      <div class="drawer-sub-tab active" data-sub="audit">Technical audit trail</div>
+      <div class="drawer-sub-tab" data-sub="transcript">Customer transcript</div>
+    </div>
+    <div id="drawerAudit"></div>
+    <div id="drawerTranscript" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+const API = "";
+let liveTimer = null, feedTimer = null;
+
+function inr(n) { return "₹" + Math.round(n || 0).toLocaleString("en-IN"); }
+function pct(n) { return (n === undefined || n === null) ? "n/a" : n + "%"; }
+
+document.querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById("view-" + tab.dataset.view).classList.add("active");
+    if (tab.dataset.view === "live") { loadLive(); startLivePolling(); } else { stopLivePolling(); }
+    if (tab.dataset.view === "feed") { loadFeed(); startFeedPolling(); } else { stopFeedPolling(); }
+    if (tab.dataset.view === "overview") loadOverview();
+    if (tab.dataset.view === "batch") loadBatch();
+    if (tab.dataset.view === "strategy") loadStrategy();
+  });
+});
+
+function startLivePolling() { stopLivePolling(); liveTimer = setInterval(loadLive, 4000); }
+function stopLivePolling() { if (liveTimer) clearInterval(liveTimer); liveTimer = null; }
+function startFeedPolling() { stopFeedPolling(); feedTimer = setInterval(loadFeed, 4000); }
+function stopFeedPolling() { if (feedTimer) clearInterval(feedTimer); feedTimer = null; }
+
+async function loadOverview() {
+  const [batchRes, liveRes] = await Promise.all([
+    fetch(API + "/api/dashboard/batch-summary").then(r => r.json()),
+    fetch(API + "/api/dashboard/live-summary").then(r => r.json()),
+  ]);
+  const el = document.getElementById("overviewStats");
+  el.innerHTML = "";
+  if (batchRes.available) {
+    addStat(el, "Batch: at-risk revenue", inr(batchRes.at_risk_inr_total), "");
+    addStat(el, "Batch: recovery-attempt rate", batchRes.recovery_attempt_rate_pct + "%", `${batchRes.outcome_counts.actioned || 0} / ${batchRes.total_cases} cases actioned`, "ok");
+    addStat(el, "Batch: hard-stopped", batchRes.outcome_counts.hard_stop || 0, "blocked before the agent was called", "warn");
+  }
+  addStat(el, "Live: cases this session", liveRes.total_live_cases, "", "");
+  addStat(el, "Live: at-risk revenue", inr(liveRes.at_risk_inr_total), "", "");
+  addStat(el, "Live: gate rejections", liveRes.gate_rejections_total, "proposals the fence blocked", liveRes.gate_rejections_total > 0 ? "danger" : "");
+}
+
+function addStat(container, label, value, footnote, cls) {
+  const div = document.createElement("div");
+  div.className = "stat";
+  div.innerHTML = `<div class="label">${label}</div><div class="value ${cls||""}">${value}</div>` +
+    (footnote ? `<div class="footnote">${footnote}</div>` : "");
+  container.appendChild(div);
+}
+
+async function loadBatch() {
+  const data = await fetch(API + "/api/dashboard/batch-summary").then(r => r.json());
+  if (!data.available) {
+    document.getElementById("batchStats").innerHTML = "<div class='stat'><div class='label'>No batch data</div></div>";
+    return;
+  }
+  const el = document.getElementById("batchStats");
+  el.innerHTML = "";
+  addStat(el, "Total cases", data.total_cases, "");
+  addStat(el, "At-risk revenue", inr(data.at_risk_inr_total), "");
+  addStat(el, "At-risk on actioned cases", inr(data.at_risk_inr_actioned), "", "ok");
+  addStat(el, "Recovery-attempt rate", data.recovery_attempt_rate_pct + "%", "actioned / total", "ok");
+  addStat(el, "Hard-stopped", data.outcome_counts.hard_stop || 0, "", "warn");
+  addStat(el, "No action", data.outcome_counts.no_action || 0, "");
+
+  const catTable = document.getElementById("batchCategoryTable");
+  let rows = "<thead><tr><th>Category</th><th>Actioned</th><th>No action</th><th>Hard stop</th><th>At risk</th><th>At risk (actioned)</th></tr></thead><tbody>";
+  for (const [cat, counts] of Object.entries(data.by_category)) {
+    const risk = data.by_category_at_risk_inr[cat] || {total: 0, actioned: 0};
+    rows += `<tr><td>${cat.replace(/_/g," ")}</td><td>${counts.actioned||0}</td><td>${counts.no_action||0}</td><td>${counts.hard_stop||0}</td><td>${inr(risk.total)}</td><td>${inr(risk.actioned)}</td></tr>`;
+  }
+  catTable.innerHTML = rows + "</tbody>";
+
+  const tbody = document.querySelector("#batchCasesTable tbody");
+  tbody.innerHTML = data.cases.map(c =>
+    `<tr><td><code>${c.case_id}</code></td><td>${c.category.replace(/_/g," ")}</td><td>${c.cause_category||"-"}</td>` +
+    `<td>${c.matched_rule_id||"-"}</td><td><span class="badge ${c.outcome}">${c.outcome}</span></td><td>${inr(c.cart_amount_inr)}</td></tr>`
+  ).join("");
+}
+
+async function loadLive() {
+  const cases = await fetch(API + "/api/dashboard/live-cases").then(r => r.json());
+  const liveSummary = await fetch(API + "/api/dashboard/live-summary").then(r => r.json());
+  const el = document.getElementById("liveStats");
+  el.innerHTML = "";
+  addStat(el, "Live cases", liveSummary.total_live_cases, "");
+  addStat(el, "At-risk revenue", inr(liveSummary.at_risk_inr_total), "");
+  addStat(el, "Tool calls approved", liveSummary.tool_calls_approved_total, "", "ok");
+  addStat(el, "Gate rejections", liveSummary.gate_rejections_total, "", liveSummary.gate_rejections_total > 0 ? "danger" : "");
+  addStat(el, "Hard-stopped", liveSummary.hard_stopped, "", "warn");
+  addStat(el, "Gate-exhausted (fell back safely)", liveSummary.gate_exhausted, "", liveSummary.gate_exhausted > 0 ? "warn" : "");
+
+  const table = document.getElementById("liveCasesTable");
+  const empty = document.getElementById("liveEmpty");
+  if (!cases.length) {
+    table.style.display = "none";
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+  table.style.display = "table";
+  const tbody = table.querySelector("tbody");
+  tbody.innerHTML = "";
+  cases.forEach(c => {
+    const tr = document.createElement("tr");
+    tr.className = "clickable";
+    const status = c.hard_stop ? `<span class="badge hard_stop">hard stop</span>` :
+      c.gate_exhausted ? `<span class="badge gate_exhausted">gate exhausted</span>` :
+      `<span class="badge actioned">active</span>`;
+    tr.innerHTML = `<td><code>${c.case_id}</code></td><td>${(c.category||"").replace(/_/g," ")}</td>` +
+      `<td>${c.cause_category||"-"}</td><td>${c.matched_rule_id||"-"}</td><td>${status}</td>` +
+      `<td>${inr(c.cart_amount_inr)}</td><td>${new Date(c.updated_at).toLocaleTimeString()}</td>`;
+    tr.onclick = () => openDrawer(c.case_id);
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadFeed() {
+  const events = await fetch(API + "/api/dashboard/recent-audit?limit=80").then(r => r.json());
+  const list = document.getElementById("feedList");
+  list.innerHTML = "";
+  events.slice().reverse().forEach(e => {
+    const div = document.createElement("div");
+    div.className = "audit-event";
+    div.innerHTML = `<div class="head"><span><span class="etype">${e.event_type}</span> &middot; <code>${e.case_id}</code></span><span>${new Date(e.ts).toLocaleTimeString()}</span></div>` +
+      `<pre>${escapeHtml(JSON.stringify(e.payload, null, 0))}</pre>`;
+    list.appendChild(div);
+  });
+  if (!events.length) list.innerHTML = "<div id='liveEmpty'>No activity yet.</div>";
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+}
+
+async function openDrawer(caseId) {
+  document.getElementById("drawerBackdrop").classList.add("open");
+  document.getElementById("drawer").classList.add("open");
+  document.getElementById("drawerTitle").textContent = caseId;
+
+  const [auditEvents, transcript] = await Promise.all([
+    fetch(API + `/api/dashboard/case/${caseId}/audit`).then(r => r.ok ? r.json() : []),
+    fetch(API + `/api/dashboard/case/${caseId}/transcript`).then(r => r.ok ? r.json() : null),
+  ]);
+
+  if (transcript) {
+    document.getElementById("drawerSub").textContent =
+      `${transcript.case.category} · ${transcript.strategy.matched_rule_id} · max discount ${transcript.strategy.max_discount_pct}%`;
+  }
+
+  const auditEl = document.getElementById("drawerAudit");
+  auditEl.innerHTML = auditEvents.map(e =>
+    `<div class="audit-event"><div class="head"><span class="etype">${e.event_type}</span><span>${new Date(e.ts).toLocaleTimeString()}</span></div><pre>${escapeHtml(JSON.stringify(e.payload, null, 1))}</pre></div>`
+  ).join("") || "<div id='liveEmpty'>No audit events.</div>";
+
+  const transcriptEl = document.getElementById("drawerTranscript");
+  if (transcript) {
+    transcriptEl.innerHTML = transcript.messages.map(m =>
+      `<div class="transcript-msg ${m.kind === 'gate_rejected' ? 'gate_rejected' : ''}"><div class="role">${m.role} · ${m.kind}</div>` +
+      `${m.body ? escapeHtml(m.body) : `<pre>${escapeHtml(JSON.stringify(m.meta))}</pre>`}</div>`
+    ).join("") || "<div id='liveEmpty'>No messages.</div>";
+  } else {
+    transcriptEl.innerHTML = "<div id='liveEmpty'>No transcript for this case (webhook-origin case, not chat-origin).</div>";
+  }
+}
+
+document.getElementById("drawerClose").addEventListener("click", closeDrawer);
+document.getElementById("drawerBackdrop").addEventListener("click", closeDrawer);
+function closeDrawer() {
+  document.getElementById("drawerBackdrop").classList.remove("open");
+  document.getElementById("drawer").classList.remove("open");
+}
+document.querySelectorAll(".drawer-sub-tab").forEach(t => {
+  t.addEventListener("click", () => {
+    document.querySelectorAll(".drawer-sub-tab").forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    document.getElementById("drawerAudit").style.display = t.dataset.sub === "audit" ? "block" : "none";
+    document.getElementById("drawerTranscript").style.display = t.dataset.sub === "transcript" ? "block" : "none";
+  });
+});
+
+async function loadStrategy() {
+  const cfg = await fetch(API + "/api/dashboard/strategy").then(r => r.json());
+  document.getElementById("strategyEditor").value = JSON.stringify(cfg, null, 2);
+  document.getElementById("strategyStatus").textContent = "";
+}
+
+document.getElementById("reloadStrategyBtn").addEventListener("click", loadStrategy);
+document.getElementById("saveStrategyBtn").addEventListener("click", async () => {
+  const status = document.getElementById("strategyStatus");
+  let parsed;
+  try {
+    parsed = JSON.parse(document.getElementById("strategyEditor").value);
+  } catch (e) {
+    status.textContent = "Invalid JSON: " + e.message;
+    status.className = "err";
+    return;
+  }
+  const res = await fetch(API + "/api/dashboard/strategy", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(parsed),
+  });
+  if (res.ok) {
+    status.textContent = "Saved - the next case (batch excluded) uses this immediately.";
+    status.className = "ok";
+  } else {
+    const err = await res.json().catch(() => ({}));
+    status.textContent = "Failed: " + (err.detail || res.status);
+    status.className = "err";
+  }
+});
+
+loadOverview();
+</script>
+</body>
+</html>

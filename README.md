@@ -20,11 +20,18 @@ hard-stopped, 7 no-action**, live against the real agent — see
 exception list. See [`docs/plan.md`](docs/plan.md) for the architecture and timeline, and
 [`docs/pitch_script.md`](docs/pitch_script.md) for the 5-minute pitch outline.
 
+Two live web UIs sit on top of the same pipeline: **`/chat`**, where a judge can simulate a
+payment failure and talk to Lazarus directly, turn by turn, with every proposed action gated
+live; and **`/dashboard`**, which audits everything — the completed batch run, every live
+chat case, a real-time activity feed, and an editable view of the strategy config itself. See
+[Live demo](#live-demo) below.
+
 ## Architecture
 
 ```mermaid
 flowchart TD
     A[Razorpay Webhook] -->|HMAC verified, deduped| B[Webhook Receiver]
+    W[Customer chat UI /chat] -->|simulated failure, in-process| C
     B --> C[Diagnosis Engine<br/>deterministic]
     C --> D[Strategy Engine<br/>deterministic]
     D -->|allowed actions + bounds only| E[Decision Agent<br/>OpenRouter LLM]
@@ -35,12 +42,16 @@ flowchart TD
     G --> I[Audit Trail]
     H --> I
     D -->|hard stop| I
+    E -->|customer reply re-enters the loop| E
+    I --> V[Dashboard /dashboard]
+    W -->|chat bubbles, gate rejections shown live| W
 ```
 
 The LLM decides **which** allowed action to take and **how** to phrase it. It never decides
 **how much** (discount %) or **how many times** (retries) — those come from the strategy
 config, and every proposed tool call is re-checked against them in code before anything
-executes.
+executes. `/chat` re-enters that same loop on every customer reply rather than running it
+once; a customer's message can change what the agent *says*, never what it's *allowed to do*.
 
 ## What is live vs. simulated
 
@@ -61,7 +72,23 @@ aspirational.
 | 50-record batch (`data/batch_cases.json`) | 20 subscription-failure / 15 checkout-abandonment / 15 receivable. **checkout-abandonment** is now fully real (`is_synthetic: false`) — real test-mode orders, genuinely left unpaid, exactly as plan §8 specifies. **subscription-failure** stays `is_synthetic: true` — the order is real but the failure event is still modeled (Razorpay's test mode has no server-only way to force a card decline outside the checkout.js/browser flow; plan §8 itself specifies "orders + modeled failure events"). **receivable** stays fully synthetic by design. |
 | Batch runner (`scripts/run_batch.py`) | Done — full live run completed, 50/50 cases resolved. `--dry-run` resolves diagnosis+strategy only (no API key, no cost) |
 | Metrics report (`scripts/generate_report.py` → `data/metrics_report.md`) | Done — recovery-attempt rate, outcome breakdown by category, guardrail evidence, honest exception list |
-| WhatsApp delivery | Not started — `console` channel is the default |
+| WhatsApp delivery | Not started — deliberately superseded by the `/chat` web UI (see below) so judges don't need to set up WhatsApp/Telegram to see the agent talk to a customer; `console` stays the default `NOTIFY_CHANNEL` |
+| Customer chat UI (`/chat`) | Done — multi-turn, same agent loop and policy gate as the webhook pipeline; failure trigger is simulated in-process (no real Razorpay webhook delivery needed for a demo), clearly logged as `is_synthetic: true` |
+| Merchant dashboard (`/dashboard`) | Done — batch-run metrics, live case list, per-case audit trail + transcript, real-time activity feed, and a live-editable strategy config (edits apply to the next case immediately, no redeploy) |
+| Hosting (Vercel) | Done — see [Deploying to Vercel](#deploying-to-vercel). Storage auto-switches to Postgres (Neon) when `DATABASE_URL` is set, since Vercel's filesystem is ephemeral; local dev is unaffected and stays on SQLite/JSONL |
+
+## Live demo
+
+- **`/chat`** — pick a scenario (subscription failure, checkout abandonment, B2B receivable,
+  or a hard-stop case) to simulate a payment failure, then talk to Lazarus. Every reply
+  re-enters the same gated agent loop the webhook pipeline uses. Try asking for a discount
+  bigger than the matched rule allows — the policy gate's rejection shows up inline in the
+  chat as it happens, not just in a log file.
+- **`/dashboard`** — the **Batch run** tab is the completed 50-case run (see Status above);
+  the **Live cases** and **Activity feed** tabs are scoped to whatever's been created through
+  `/chat` this session, updating every few seconds; **Strategy config** lets you edit the
+  merchant's bounds (`max_discount_pct`, `allowed_actions`, hard stops) and save — the very
+  next case evaluates against the new bounds immediately.
 
 ## Quick start
 
@@ -72,8 +99,36 @@ cp .env.example .env   # then fill in your keys
 uvicorn app.main:app --reload
 ```
 
-Redis is optional. The default state store is SQLite so the project runs from a clean
-clone with no external services.
+Open `http://localhost:8000/chat` and `http://localhost:8000/dashboard`. Redis is optional
+and unused by anything currently built. `DATABASE_URL` is optional too — leave it blank
+locally and every store (webhook dedupe, customer history, audit trail, live conversations,
+strategy config) runs on SQLite/JSONL under `data/`, so the project runs from a clean clone
+with no external services.
+
+## Deploying to Vercel
+
+Vercel's Python functions have an ephemeral, read-only filesystem — SQLite files and the
+`audit.jsonl` log would silently lose every row between requests there. Every store in this
+repo already has a Postgres-backed twin (`app/pg.py` + the `Postgres*` classes alongside each
+local one in `app/*.py`) that activates automatically the moment `DATABASE_URL` is set —
+nothing else about the code changes between local and deployed.
+
+1. Create a free Postgres database: [Neon via the Vercel Marketplace](https://vercel.com/marketplace/neon)
+   (Vercel's own Postgres product was retired in favor of Neon). Use the **pooled**
+   connection string Neon gives you (the `-pooler` host) — each serverless invocation opens
+   its own short-lived connection rather than sharing a pool.
+2. `npm i -g vercel`, then `vercel login` (interactive — this has to be you, not an agent) and
+   `vercel link` from the repo root.
+3. Set environment variables (`vercel env add <NAME>`, or via the Vercel dashboard) for at
+   least: `DATABASE_URL`, `RAZORPAY_WEBHOOK_SECRET`, `OPENROUTER_API_KEY`. Everything else in
+   `.env.example` has a sane default.
+4. `vercel deploy --prod`.
+
+The schema (`processed_events`, `customers`/`customer_events`, `audit_log`, `conversations`,
+`display_messages`, `strategy_config`) is created automatically on first request via
+`ensure_schema()` — no separate migration step. `vercel.json` routes every path to
+`api/index.py`, a one-line re-export of the same `app` object `uvicorn app.main:app` runs
+locally, with `maxDuration: 60` since an agent turn is a live LLM call, not instant.
 
 ## Repo conventions
 

@@ -94,3 +94,75 @@ class CustomerStore:
             return 999.0
         last = datetime.fromisoformat(row[0])
         return (datetime.now(UTC) - last).total_seconds() / 3600
+
+
+class PostgresCustomerStore:
+    """Same interface as CustomerStore, backed by Neon - used when
+    settings.database_url is set (Vercel's filesystem is ephemeral)."""
+
+    def __init__(self):
+        from app.pg import ensure_schema
+
+        ensure_schema()
+
+    def get_profile(self, customer_id: str) -> dict:
+        from app.pg import get_conn
+
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT ltv_inr, marketing_opt_in FROM customers WHERE customer_id = %s",
+                (customer_id,),
+            ).fetchone()
+        if row is None:
+            return {"ltv_inr": 0.0, "marketing_opt_in": True}
+        return {"ltv_inr": row["ltv_inr"], "marketing_opt_in": bool(row["marketing_opt_in"])}
+
+    def record_abandon_event(self, customer_id: str) -> None:
+        from app.pg import get_conn
+
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT INTO customers (customer_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                (customer_id,),
+            )
+            conn.execute(
+                "INSERT INTO customer_events (customer_id, event_type, ts) "
+                "VALUES (%s, 'abandon', %s)",
+                (customer_id, datetime.now(UTC)),
+            )
+
+    def record_outreach_event(self, customer_id: str) -> None:
+        from app.pg import get_conn
+
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT INTO customer_events (customer_id, event_type, ts) "
+                "VALUES (%s, 'outreach', %s)",
+                (customer_id, datetime.now(UTC)),
+            )
+
+    def abandons_last_7d(self, customer_id: str) -> int:
+        from app.pg import get_conn
+
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM customer_events "
+                "WHERE customer_id = %s AND event_type = 'abandon' AND ts >= %s",
+                (customer_id, cutoff),
+            ).fetchone()
+        return row["n"] if row else 0
+
+    def hours_since_last_outreach(self, customer_id: str) -> float:
+        from app.pg import get_conn
+
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT ts FROM customer_events WHERE customer_id = %s AND event_type = 'outreach' "
+                "ORDER BY ts DESC LIMIT 1",
+                (customer_id,),
+            ).fetchone()
+        if row is None:
+            return 999.0
+        last = row["ts"]
+        return (datetime.now(UTC) - last).total_seconds() / 3600
