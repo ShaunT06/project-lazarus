@@ -45,11 +45,6 @@ class TursoWebhookEventStore:
     settings.database_url is set (Vercel's filesystem is ephemeral). Same
     SQL as the SQLite class above - libSQL is a SQLite-compatible dialect."""
 
-    def __init__(self):
-        from app.turso import ensure_schema
-
-        ensure_schema()
-
     def mark_processed_if_new(self, event_id: str) -> bool:
         from app.turso import get_client
 

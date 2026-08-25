@@ -29,9 +29,6 @@ class StrategyConfigStore:
 
 class TursoStrategyConfigStore:
     def __init__(self, seed_path: Path):
-        from app.turso import ensure_schema
-
-        ensure_schema()
         self._seed_path = seed_path
 
     def get(self) -> dict[str, Any]:

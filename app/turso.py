@@ -90,22 +90,44 @@ _SCHEMA_STATEMENTS = [
 _initialized = False
 
 
-@contextmanager
-def get_client():
-    client = libsql_client.create_client_sync(
+def _raw_client():
+    return libsql_client.create_client_sync(
         settings.database_url, auth_token=settings.turso_auth_token
     )
+
+
+@contextmanager
+def get_client():
+    """Lazy by design: schema creation and the actual connection attempt
+    only happen here, on first real use - not at store construction time.
+    Store classes are built eagerly (app/main.py's module-level `app =
+    create_app()` runs on import, for uvicorn/Vercel), so if connecting
+    happened in __init__ instead, merely having DATABASE_URL set with a
+    not-yet-valid token would crash the whole process on import, before a
+    single request ever arrived."""
+    _ensure_schema_once()
+    client = _raw_client()
     try:
         yield client
     finally:
         client.close()
 
 
-def ensure_schema() -> None:
-    """Idempotent; cheap enough to call on every cold start."""
+def _ensure_schema_once() -> None:
     global _initialized
     if _initialized:
         return
-    with get_client() as client:
+    client = _raw_client()
+    try:
         client.batch(_SCHEMA_STATEMENTS)
+    finally:
+        client.close()
     _initialized = True
+
+
+def ensure_schema() -> None:
+    """Public alias kept for callers that want to force initialization
+    explicitly (e.g. a future migration script) - get_client() already
+    calls this internally on every use, so nothing needs to call it up
+    front."""
+    _ensure_schema_once()

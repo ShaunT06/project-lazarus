@@ -222,11 +222,6 @@ class TursoConversationStore:
     """Same interface as ConversationStore, backed by Turso - same SQL as
     the SQLite class above, libSQL is a SQLite-compatible dialect."""
 
-    def __init__(self):
-        from app.turso import ensure_schema
-
-        ensure_schema()
-
     def create(
         self,
         case: CaseContext,

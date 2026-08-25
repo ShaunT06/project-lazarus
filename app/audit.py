@@ -53,11 +53,6 @@ class TursoAuditLogger:
     settings.database_url is set (Vercel's filesystem is ephemeral, so a
     JSONL file would silently lose every row between invocations)."""
 
-    def __init__(self):
-        from app.turso import ensure_schema
-
-        ensure_schema()
-
     def log(self, case_id: str, event_type: str, payload: dict[str, Any]) -> None:
         from app.turso import get_client
 
