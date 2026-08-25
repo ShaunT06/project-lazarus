@@ -8,7 +8,7 @@ StrategyEngine.from_file already used - no new storage, no behavior change
 for the existing CLI scripts and tests.
 
 Vercel deploy: the filesystem is read-only/ephemeral, so edits go to a
-Postgres table instead, seeded from the same JSON file on first read.
+Turso table instead, seeded from the same JSON file on first read.
 """
 
 import json
@@ -27,22 +27,20 @@ class StrategyConfigStore:
         self._path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-class PostgresStrategyConfigStore:
+class TursoStrategyConfigStore:
     def __init__(self, seed_path: Path):
-        from app.pg import ensure_schema
+        from app.turso import ensure_schema
 
         ensure_schema()
         self._seed_path = seed_path
 
     def get(self) -> dict[str, Any]:
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        with get_conn() as conn:
-            row = conn.execute(
-                "SELECT config FROM strategy_config ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-        if row is not None:
-            return row["config"]
+        with get_client() as client:
+            rs = client.execute("SELECT config FROM strategy_config ORDER BY id DESC LIMIT 1")
+        if rs.rows:
+            return json.loads(rs.rows[0]["config"])
         seed = json.loads(self._seed_path.read_text(encoding="utf-8"))
         self.save(seed)
         return seed
@@ -50,10 +48,10 @@ class PostgresStrategyConfigStore:
     def save(self, config: dict[str, Any]) -> None:
         from datetime import UTC, datetime
 
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        with get_conn() as conn:
-            conn.execute(
-                "INSERT INTO strategy_config (config, updated_at) VALUES (%s, %s)",
-                (json.dumps(config, ensure_ascii=False), datetime.now(UTC)),
+        with get_client() as client:
+            client.execute(
+                "INSERT INTO strategy_config (config, updated_at) VALUES (?, ?)",
+                (json.dumps(config, ensure_ascii=False), datetime.now(UTC).isoformat()),
             )

@@ -1,6 +1,6 @@
 """Append-only audit trail. Every diagnosis, strategy decision, LLM turn,
 tool call, and gate verdict gets written here - this is the file (or table,
-on Postgres) the metrics report, the dashboard, and the "guardrail-rejection
+on Turso) the metrics report, the dashboard, and the "guardrail-rejection
 shown live" demo all read from. Nothing is displayed anywhere that didn't
 first go through .log().
 """
@@ -48,58 +48,61 @@ class AuditLogger:
         return list(seen.keys())
 
 
-class PostgresAuditLogger:
-    """Same interface as AuditLogger, backed by Neon - used when
+class TursoAuditLogger:
+    """Same interface as AuditLogger, backed by Turso - used when
     settings.database_url is set (Vercel's filesystem is ephemeral, so a
     JSONL file would silently lose every row between invocations)."""
 
     def __init__(self):
-        from app.pg import ensure_schema
+        from app.turso import ensure_schema
 
         ensure_schema()
 
     def log(self, case_id: str, event_type: str, payload: dict[str, Any]) -> None:
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        with get_conn() as conn:
-            conn.execute(
-                "INSERT INTO audit_log (ts, case_id, event_type, payload) VALUES (%s, %s, %s, %s)",
-                (datetime.now(UTC), case_id, event_type, json.dumps(payload, ensure_ascii=False)),
+        with get_client() as client:
+            client.execute(
+                "INSERT INTO audit_log (ts, case_id, event_type, payload) VALUES (?, ?, ?, ?)",
+                (
+                    datetime.now(UTC).isoformat(),
+                    case_id,
+                    event_type,
+                    json.dumps(payload, ensure_ascii=False),
+                ),
             )
 
     def read(self, case_id: str | None = None, limit: int = 2000) -> list[dict[str, Any]]:
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        with get_conn() as conn:
+        with get_client() as client:
             if case_id is None:
-                rows = conn.execute(
+                rs = client.execute(
                     "SELECT ts, case_id, event_type, payload FROM audit_log "
-                    "ORDER BY id DESC LIMIT %s",
+                    "ORDER BY id DESC LIMIT ?",
                     (limit,),
-                ).fetchall()
+                )
             else:
-                rows = conn.execute(
+                rs = client.execute(
                     "SELECT ts, case_id, event_type, payload FROM audit_log "
-                    "WHERE case_id = %s ORDER BY id DESC LIMIT %s",
+                    "WHERE case_id = ? ORDER BY id DESC LIMIT ?",
                     (case_id, limit),
-                ).fetchall()
+                )
         records = [
             {
-                "ts": row["ts"].isoformat(),
+                "ts": row["ts"],
                 "case_id": row["case_id"],
                 "event_type": row["event_type"],
-                "payload": row["payload"],
+                "payload": json.loads(row["payload"]),
             }
-            for row in rows
+            for row in rs.rows
         ]
         records.reverse()
         return records
 
     def case_ids(self) -> list[str]:
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        with get_conn() as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT case_id FROM audit_log ORDER BY case_id"
-            ).fetchall()
-        return [row["case_id"] for row in rows]
+        with get_client() as client:
+            rs = client.execute("SELECT DISTINCT case_id FROM audit_log ORDER BY case_id")
+        return [row["case_id"] for row in rs.rows]

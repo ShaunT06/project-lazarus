@@ -24,12 +24,12 @@ from pydantic import BaseModel
 
 from app.agent import continue_conversation, start_conversation
 from app.audit import AuditLogger
-from app.conversation_store import ConversationStore, PostgresConversationStore
-from app.customer_store import CustomerStore, PostgresCustomerStore
+from app.conversation_store import ConversationStore, TursoConversationStore
+from app.customer_store import CustomerStore, TursoCustomerStore
 from app.diagnosis import diagnose
 from app.models import CaseContext
 from app.strategy import StrategyEngine
-from app.strategy_store import PostgresStrategyConfigStore, StrategyConfigStore
+from app.strategy_store import StrategyConfigStore, TursoStrategyConfigStore
 
 _LLM_UNAVAILABLE_MESSAGE = (
     "Lazarus can't reach the language model right now (it may be rate-limited - "
@@ -150,10 +150,10 @@ def _display_from_actions(store, case_id: str, actions: list[dict], rejections: 
 
 def build_chat_router(
     *,
-    conversation_store: ConversationStore | PostgresConversationStore,
-    customer_store: CustomerStore | PostgresCustomerStore,
+    conversation_store: ConversationStore | TursoConversationStore,
+    customer_store: CustomerStore | TursoCustomerStore,
     audit: AuditLogger,
-    strategy_store: StrategyConfigStore | PostgresStrategyConfigStore,
+    strategy_store: StrategyConfigStore | TursoStrategyConfigStore,
     openrouter_client_factory,
     max_gate_corrections: int = 3,
     notify_channel: str = "console",

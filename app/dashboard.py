@@ -22,17 +22,17 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from app.audit import AuditLogger
-from app.conversation_store import ConversationStore, PostgresConversationStore
-from app.strategy_store import PostgresStrategyConfigStore, StrategyConfigStore
+from app.conversation_store import ConversationStore, TursoConversationStore
+from app.strategy_store import StrategyConfigStore, TursoStrategyConfigStore
 
 _BATCH_SUMMARY_PATH = Path("data/batch_summary.json")
 
 
 def build_dashboard_router(
     *,
-    conversation_store: ConversationStore | PostgresConversationStore,
+    conversation_store: ConversationStore | TursoConversationStore,
     audit: AuditLogger,
-    strategy_store: StrategyConfigStore | PostgresStrategyConfigStore,
+    strategy_store: StrategyConfigStore | TursoStrategyConfigStore,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/dashboard")
 

@@ -25,7 +25,7 @@ from app.models import CaseContext, StrategyResult
 
 
 class ConversationStore:
-    """SQLite-backed, for local dev - mirrors PostgresConversationStore."""
+    """SQLite-backed, for local dev - mirrors TursoConversationStore."""
 
     def __init__(self, db_path: Path):
         self._db_path = db_path
@@ -218,11 +218,12 @@ class ConversationStore:
         return out
 
 
-class PostgresConversationStore:
-    """Same interface as ConversationStore, backed by Neon."""
+class TursoConversationStore:
+    """Same interface as ConversationStore, backed by Turso - same SQL as
+    the SQLite class above, libSQL is a SQLite-compatible dialect."""
 
     def __init__(self):
-        from app.pg import ensure_schema
+        from app.turso import ensure_schema
 
         ensure_schema()
 
@@ -233,17 +234,17 @@ class PostgresConversationStore:
         strategy: StrategyResult,
         llm_messages: list[dict],
     ) -> None:
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        now = datetime.now(UTC)
-        with get_conn() as conn:
-            conn.execute(
+        now = datetime.now(UTC).isoformat()
+        with get_client() as client:
+            client.execute(
                 """
                 INSERT INTO conversations
                     (case_id, case_context, cause_category, strategy, llm_messages,
                      corrections, approved_discount_pct, gate_exhausted,
                      hard_stop, hard_stop_reason, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, 0, 0, FALSE, %s, %s, %s, %s)
+                VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, ?)
                 """,
                 (
                     case.case_id,
@@ -251,7 +252,7 @@ class PostgresConversationStore:
                     cause_category,
                     strategy.model_dump_json(),
                     json.dumps(llm_messages, ensure_ascii=False),
-                    strategy.hard_stop,
+                    int(strategy.hard_stop),
                     strategy.hard_stop_reason,
                     now,
                     now,
@@ -259,27 +260,26 @@ class PostgresConversationStore:
             )
 
     def get(self, case_id: str) -> dict[str, Any] | None:
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        with get_conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM conversations WHERE case_id = %s", (case_id,)
-            ).fetchone()
-        if row is None:
+        with get_client() as client:
+            rs = client.execute("SELECT * FROM conversations WHERE case_id = ?", (case_id,))
+        if not rs.rows:
             return None
+        row = rs.rows[0]
         return {
             "case_id": row["case_id"],
-            "case": CaseContext.model_validate(row["case_context"]),
+            "case": CaseContext.model_validate_json(row["case_context"]),
             "cause_category": row["cause_category"],
-            "strategy": StrategyResult.model_validate(row["strategy"]),
-            "llm_messages": row["llm_messages"],
+            "strategy": StrategyResult.model_validate_json(row["strategy"]),
+            "llm_messages": json.loads(row["llm_messages"]),
             "corrections": row["corrections"],
             "approved_discount_pct": row["approved_discount_pct"],
-            "gate_exhausted": row["gate_exhausted"],
-            "hard_stop": row["hard_stop"],
+            "gate_exhausted": bool(row["gate_exhausted"]),
+            "hard_stop": bool(row["hard_stop"]),
             "hard_stop_reason": row["hard_stop_reason"],
-            "created_at": row["created_at"].isoformat(),
-            "updated_at": row["updated_at"].isoformat(),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
         }
 
     def update_state(
@@ -291,22 +291,22 @@ class PostgresConversationStore:
         approved_discount_pct: float,
         gate_exhausted: bool,
     ) -> None:
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        with get_conn() as conn:
-            conn.execute(
+        with get_client() as client:
+            client.execute(
                 """
                 UPDATE conversations
-                SET llm_messages = %s, corrections = %s, approved_discount_pct = %s,
-                    gate_exhausted = %s, updated_at = %s
-                WHERE case_id = %s
+                SET llm_messages = ?, corrections = ?, approved_discount_pct = ?,
+                    gate_exhausted = ?, updated_at = ?
+                WHERE case_id = ?
                 """,
                 (
                     json.dumps(llm_messages, ensure_ascii=False),
                     corrections,
                     approved_discount_pct,
-                    gate_exhausted,
-                    datetime.now(UTC),
+                    int(gate_exhausted),
+                    datetime.now(UTC).isoformat(),
                     case_id,
                 ),
             )
@@ -314,56 +314,56 @@ class PostgresConversationStore:
     def add_display_message(
         self, case_id: str, role: str, kind: str, body: str | None, meta: dict | None = None
     ) -> None:
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        with get_conn() as conn:
-            conn.execute(
+        with get_client() as client:
+            client.execute(
                 "INSERT INTO display_messages (case_id, role, kind, body, meta, ts) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     case_id,
                     role,
                     kind,
                     body,
                     json.dumps(meta or {}, ensure_ascii=False),
-                    datetime.now(UTC),
+                    datetime.now(UTC).isoformat(),
                 ),
             )
 
     def get_display_messages(self, case_id: str) -> list[dict[str, Any]]:
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        with get_conn() as conn:
-            rows = conn.execute(
+        with get_client() as client:
+            rs = client.execute(
                 "SELECT role, kind, body, meta, ts FROM display_messages "
-                "WHERE case_id = %s ORDER BY id ASC",
+                "WHERE case_id = ? ORDER BY id ASC",
                 (case_id,),
-            ).fetchall()
+            )
         return [
             {
                 "role": r["role"],
                 "kind": r["kind"],
                 "body": r["body"],
-                "meta": r["meta"],
-                "ts": r["ts"].isoformat(),
+                "meta": json.loads(r["meta"]),
+                "ts": r["ts"],
             }
-            for r in rows
+            for r in rs.rows
         ]
 
     def list_cases(self, limit: int = 200) -> list[dict[str, Any]]:
-        from app.pg import get_conn
+        from app.turso import get_client
 
-        with get_conn() as conn:
-            rows = conn.execute(
+        with get_client() as client:
+            rs = client.execute(
                 "SELECT case_id, case_context, cause_category, strategy, gate_exhausted, "
                 "hard_stop, hard_stop_reason, created_at, updated_at FROM conversations "
-                "ORDER BY updated_at DESC LIMIT %s",
+                "ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
-            ).fetchall()
+            )
         out = []
-        for r in rows:
-            case = r["case_context"]
-            strategy = r["strategy"]
+        for r in rs.rows:
+            case = json.loads(r["case_context"])
+            strategy = json.loads(r["strategy"])
             out.append(
                 {
                     "case_id": r["case_id"],
@@ -372,11 +372,11 @@ class PostgresConversationStore:
                     "cart_amount_inr": case.get("cart_amount_inr"),
                     "cause_category": r["cause_category"],
                     "matched_rule_id": strategy.get("matched_rule_id"),
-                    "gate_exhausted": r["gate_exhausted"],
-                    "hard_stop": r["hard_stop"],
+                    "gate_exhausted": bool(r["gate_exhausted"]),
+                    "hard_stop": bool(r["hard_stop"]),
                     "hard_stop_reason": r["hard_stop_reason"],
-                    "created_at": r["created_at"].isoformat(),
-                    "updated_at": r["updated_at"].isoformat(),
+                    "created_at": r["created_at"],
+                    "updated_at": r["updated_at"],
                 }
             )
         return out

@@ -1,7 +1,7 @@
-"""Picks SQLite/JSONL (local dev, tests) vs Postgres/Neon (Vercel deploy)
+"""Picks SQLite/JSONL (local dev, tests) vs Turso/libSQL (Vercel deploy)
 for every store, based on settings.database_url. One place to look to know
 which backend is live - every router builds its stores through here rather
-than importing SQLite or Postgres classes directly.
+than importing SQLite or Turso classes directly.
 """
 
 from pathlib import Path
@@ -11,9 +11,9 @@ from app.config import settings
 
 def get_audit_logger(jsonl_path: Path):
     if settings.database_url:
-        from app.audit import PostgresAuditLogger
+        from app.audit import TursoAuditLogger
 
-        return PostgresAuditLogger()
+        return TursoAuditLogger()
     from app.audit import AuditLogger
 
     return AuditLogger(jsonl_path)
@@ -21,9 +21,9 @@ def get_audit_logger(jsonl_path: Path):
 
 def get_webhook_store(db_path: Path):
     if settings.database_url:
-        from app.webhook_store import PostgresWebhookEventStore
+        from app.webhook_store import TursoWebhookEventStore
 
-        return PostgresWebhookEventStore()
+        return TursoWebhookEventStore()
     from app.webhook_store import WebhookEventStore
 
     return WebhookEventStore(db_path)
@@ -31,9 +31,9 @@ def get_webhook_store(db_path: Path):
 
 def get_customer_store(db_path: Path):
     if settings.database_url:
-        from app.customer_store import PostgresCustomerStore
+        from app.customer_store import TursoCustomerStore
 
-        return PostgresCustomerStore()
+        return TursoCustomerStore()
     from app.customer_store import CustomerStore
 
     return CustomerStore(db_path)
@@ -41,9 +41,9 @@ def get_customer_store(db_path: Path):
 
 def get_conversation_store(db_path: Path):
     if settings.database_url:
-        from app.conversation_store import PostgresConversationStore
+        from app.conversation_store import TursoConversationStore
 
-        return PostgresConversationStore()
+        return TursoConversationStore()
     from app.conversation_store import ConversationStore
 
     return ConversationStore(db_path)
@@ -51,9 +51,9 @@ def get_conversation_store(db_path: Path):
 
 def get_strategy_config_store(seed_path: Path):
     if settings.database_url:
-        from app.strategy_store import PostgresStrategyConfigStore
+        from app.strategy_store import TursoStrategyConfigStore
 
-        return PostgresStrategyConfigStore(seed_path)
+        return TursoStrategyConfigStore(seed_path)
     from app.strategy_store import StrategyConfigStore
 
     return StrategyConfigStore(seed_path)

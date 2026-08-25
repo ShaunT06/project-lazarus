@@ -37,7 +37,7 @@ def create_app(
     """App factory - takes explicit paths/secret so tests get isolated,
     ephemeral state instead of touching data/ on disk or global settings.
 
-    Storage backend (SQLite/JSONL locally, Postgres on Vercel) is picked by
+    Storage backend (SQLite/JSONL locally, Turso on Vercel) is picked by
     app.stores based on settings.database_url - callers here never choose
     the backend directly, only the local-dev fallback paths."""
     app = FastAPI(title="Project Lazarus")

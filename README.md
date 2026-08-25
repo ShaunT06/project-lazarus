@@ -75,7 +75,7 @@ aspirational.
 | WhatsApp delivery | Not started — deliberately superseded by the `/chat` web UI (see below) so judges don't need to set up WhatsApp/Telegram to see the agent talk to a customer; `console` stays the default `NOTIFY_CHANNEL` |
 | Customer chat UI (`/chat`) | Done — multi-turn, same agent loop and policy gate as the webhook pipeline; failure trigger is simulated in-process (no real Razorpay webhook delivery needed for a demo), clearly logged as `is_synthetic: true` |
 | Merchant dashboard (`/dashboard`) | Done — batch-run metrics, live case list, per-case audit trail + transcript, real-time activity feed, and a live-editable strategy config (edits apply to the next case immediately, no redeploy) |
-| Hosting (Vercel) | Done — see [Deploying to Vercel](#deploying-to-vercel). Storage auto-switches to Postgres (Neon) when `DATABASE_URL` is set, since Vercel's filesystem is ephemeral; local dev is unaffected and stays on SQLite/JSONL |
+| Hosting (Vercel) | Done — see [Deploying to Vercel](#deploying-to-vercel). Storage auto-switches to Turso (libSQL) when `DATABASE_URL` is set, since Vercel's filesystem is ephemeral; local dev is unaffected and stays on SQLite/JSONL |
 
 ## Live demo
 
@@ -109,19 +109,21 @@ with no external services.
 
 Vercel's Python functions have an ephemeral, read-only filesystem — SQLite files and the
 `audit.jsonl` log would silently lose every row between requests there. Every store in this
-repo already has a Postgres-backed twin (`app/pg.py` + the `Postgres*` classes alongside each
+repo already has a Turso-backed twin (`app/turso.py` + the `Turso*` classes alongside each
 local one in `app/*.py`) that activates automatically the moment `DATABASE_URL` is set —
-nothing else about the code changes between local and deployed.
+nothing else about the code changes between local and deployed. libSQL (Turso's engine) is a
+SQLite-compatible fork, so those twins run the *same* SQL as the local SQLite classes; only
+the connection source differs.
 
-1. Create a free Postgres database: [Neon via the Vercel Marketplace](https://vercel.com/marketplace/neon)
-   (Vercel's own Postgres product was retired in favor of Neon). Use the **pooled**
-   connection string Neon gives you (the `-pooler` host) — each serverless invocation opens
-   its own short-lived connection rather than sharing a pool.
+1. Create a free database: [Turso via the Vercel Marketplace](https://vercel.com/marketplace/tursocloud)
+   (or directly at [turso.tech](https://turso.tech) / the `turso` CLI). You need two values:
+   the database URL (`libsql://<db>-<org>.turso.io`) and a separate auth token
+   (`turso db tokens create <name>`).
 2. `npm i -g vercel`, then `vercel login` (interactive — this has to be you, not an agent) and
    `vercel link` from the repo root.
 3. Set environment variables (`vercel env add <NAME>`, or via the Vercel dashboard) for at
-   least: `DATABASE_URL`, `RAZORPAY_WEBHOOK_SECRET`, `OPENROUTER_API_KEY`. Everything else in
-   `.env.example` has a sane default.
+   least: `DATABASE_URL`, `TURSO_AUTH_TOKEN`, `RAZORPAY_WEBHOOK_SECRET`, `OPENROUTER_API_KEY`.
+   Everything else in `.env.example` has a sane default.
 4. `vercel deploy --prod`.
 
 The schema (`processed_events`, `customers`/`customer_events`, `audit_log`, `conversations`,

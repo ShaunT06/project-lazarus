@@ -22,11 +22,14 @@ class Settings(BaseSettings):
     max_gate_corrections: int = 3
     notify_channel: str = "console"
 
-    # When set (Vercel deploy), all stores switch to Postgres (Neon) since
+    # When set (Vercel deploy), all stores switch to Turso (libSQL) since
     # the serverless filesystem is read-only/ephemeral - SQLite files and
     # audit.jsonl do not survive between invocations there. Unset (local
     # dev, tests) keeps the original zero-dependency SQLite/JSONL path.
+    # database_url is a libsql://<db>.turso.io URL; turso_auth_token is the
+    # separate auth token Turso issues alongside it.
     database_url: str = ""
+    turso_auth_token: str = ""
 
 
 settings = Settings()
