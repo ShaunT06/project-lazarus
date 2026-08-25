@@ -3,14 +3,23 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse, HTMLResponse
 
-from app.audit import AuditLogger
+from app.chat import build_chat_router
 from app.config import settings
-from app.customer_store import CustomerStore
+from app.dashboard import build_dashboard_router
 from app.openrouter_client import OpenRouterClient
+from app.stores import (
+    get_audit_logger,
+    get_conversation_store,
+    get_customer_store,
+    get_strategy_config_store,
+    get_webhook_store,
+)
 from app.strategy import StrategyEngine
 from app.webhook import build_webhook_router
-from app.webhook_store import WebhookEventStore
+
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
 def create_app(
@@ -19,45 +28,92 @@ def create_app(
     db_path: Path | None = None,
     audit_path: Path | None = None,
     customer_db_path: Path | None = None,
+    conversation_db_path: Path | None = None,
     strategy_config_path: Path | None = None,
     openrouter_client_factory: Callable[[], Any] | None = None,
     max_gate_corrections: int | None = None,
     notify_channel: str | None = None,
 ) -> FastAPI:
     """App factory - takes explicit paths/secret so tests get isolated,
-    ephemeral state instead of touching data/ on disk or global settings."""
+    ephemeral state instead of touching data/ on disk or global settings.
+
+    Storage backend (SQLite/JSONL locally, Postgres on Vercel) is picked by
+    app.stores based on settings.database_url - callers here never choose
+    the backend directly, only the local-dev fallback paths."""
     app = FastAPI(title="Project Lazarus")
 
-    store = WebhookEventStore(db_path or Path("data/webhook_events.db"))
-    audit = AuditLogger(audit_path or Path("data/audit.jsonl"))
-    customer_store = CustomerStore(customer_db_path or Path("data/customers.db"))
-    strategy_engine = StrategyEngine.from_file(
-        strategy_config_path or settings.strategy_config_path
+    strategy_path = strategy_config_path or settings.strategy_config_path
+    webhook_store = get_webhook_store(db_path or Path("data/webhook_events.db"))
+    audit = get_audit_logger(audit_path or Path("data/audit.jsonl"))
+    customer_store = get_customer_store(customer_db_path or Path("data/customers.db"))
+    conversation_store = get_conversation_store(
+        conversation_db_path or Path("data/conversations.db")
     )
+    strategy_store = get_strategy_config_store(strategy_path)
+    strategy_engine = StrategyEngine.from_file(strategy_path)
     secret = webhook_secret if webhook_secret is not None else settings.razorpay_webhook_secret
+    client_factory = openrouter_client_factory or OpenRouterClient
+    corrections_cap = (
+        max_gate_corrections if max_gate_corrections is not None else settings.max_gate_corrections
+    )
+    channel = notify_channel if notify_channel is not None else settings.notify_channel
 
     app.include_router(
         build_webhook_router(
-            store=store,
+            store=webhook_store,
             audit=audit,
             webhook_secret=secret,
             customer_store=customer_store,
             strategy_engine=strategy_engine,
-            openrouter_client_factory=openrouter_client_factory or OpenRouterClient,
-            max_gate_corrections=(
-                max_gate_corrections
-                if max_gate_corrections is not None
-                else settings.max_gate_corrections
-            ),
-            notify_channel=notify_channel
-            if notify_channel is not None
-            else settings.notify_channel,
+            openrouter_client_factory=client_factory,
+            max_gate_corrections=corrections_cap,
+            notify_channel=channel,
+        )
+    )
+    app.include_router(
+        build_chat_router(
+            conversation_store=conversation_store,
+            customer_store=customer_store,
+            audit=audit,
+            strategy_store=strategy_store,
+            openrouter_client_factory=client_factory,
+            max_gate_corrections=corrections_cap,
+            notify_channel=channel,
+        )
+    )
+    app.include_router(
+        build_dashboard_router(
+            conversation_store=conversation_store,
+            audit=audit,
+            strategy_store=strategy_store,
         )
     )
 
     @app.get("/healthz")
     def healthz():
         return {"status": "ok"}
+
+    @app.get("/dashboard")
+    def dashboard_page():
+        return FileResponse(_STATIC_DIR / "dashboard" / "index.html")
+
+    @app.get("/chat")
+    def chat_page():
+        return FileResponse(_STATIC_DIR / "chat" / "index.html")
+
+    @app.get("/", response_class=HTMLResponse)
+    def index():
+        return (
+            "<!doctype html><html><head><title>Project Lazarus</title>"
+            "<style>body{font-family:system-ui,sans-serif;max-width:32rem;"
+            "margin:4rem auto;line-height:1.6}a{display:block;margin:.5rem 0}"
+            "</style></head><body>"
+            "<h1>Project Lazarus</h1>"
+            "<p>AI-powered revenue recovery agent.</p>"
+            "<a href='/chat'>Customer chat (Lazarus talking to a customer)</a>"
+            "<a href='/dashboard'>Merchant dashboard (audit &amp; metrics)</a>"
+            "</body></html>"
+        )
 
     return app
 

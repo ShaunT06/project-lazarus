@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lazarus - Recovery Chat</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #11161d;
+    --panel-2: #161d26;
+    --border: #232b36;
+    --text: #e6edf3;
+    --text-dim: #8b98a5;
+    --accent: #5b8cff;
+    --accent-dim: #223258;
+    --agent-bubble: #1b2430;
+    --customer-bubble: #2a4ba8;
+    --danger: #ff6b6b;
+    --danger-bg: #2a1518;
+    --ok: #3ddc97;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .shell { display: flex; flex-direction: column; height: 100vh; max-width: 640px; margin: 0 auto; }
+  header {
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--panel);
+  }
+  header .brand { display: flex; align-items: center; gap: 10px; }
+  header .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .sub { font-size: 12px; color: var(--text-dim); }
+  header a { color: var(--text-dim); font-size: 12px; text-decoration: none; border: 1px solid var(--border); padding: 5px 10px; border-radius: 6px; }
+  header a:hover { color: var(--text); border-color: var(--accent); }
+
+  #picker { padding: 20px 18px; overflow-y: auto; flex: 1; }
+  #picker p.lead { color: var(--text-dim); font-size: 13px; margin-top: 0; }
+  .scenario {
+    display: block; width: 100%; text-align: left; padding: 14px 16px; margin-bottom: 10px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text); cursor: pointer; font-size: 14px; transition: border-color .15s, background .15s;
+  }
+  .scenario:hover { border-color: var(--accent); background: var(--panel-2); }
+  .scenario .cat { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+  .scenario .amt { float: right; color: var(--text-dim); font-size: 12px; }
+
+  #chatArea { display: none; flex-direction: column; flex: 1; min-height: 0; }
+  #meta { padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 12px; color: var(--text-dim); }
+  #meta b { color: var(--text); }
+  #meta .rule { color: var(--accent); }
+
+  #messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 82%; padding: 10px 13px; border-radius: 14px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; }
+  .msg.agent { align-self: flex-start; background: var(--agent-bubble); border-bottom-left-radius: 4px; }
+  .msg.customer { align-self: flex-end; background: var(--customer-bubble); color: #fff; border-bottom-right-radius: 4px; }
+  .msg .who { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); margin-bottom: 3px; }
+  .msg.customer .who { color: rgba(255,255,255,.7); }
+
+  .card { align-self: flex-start; max-width: 82%; background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+  .card .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+  .card .discount { display: inline-block; background: var(--accent-dim); color: var(--accent); font-size: 12px; padding: 2px 8px; border-radius: 999px; margin-bottom: 8px; }
+  .card a.pay {
+    display: inline-block; background: var(--accent); color: #fff; text-decoration: none;
+    padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  }
+  .card .link-url { display: block; margin-top: 6px; font-size: 11px; color: var(--text-dim); word-break: break-all; }
+
+  .system-note { align-self: center; font-size: 12px; color: var(--text-dim); text-align: center; padding: 6px 12px; }
+  .system-note.hardstop { color: var(--danger); background: var(--danger-bg); border-radius: 8px; padding: 10px 14px; align-self: stretch; text-align: left; }
+
+  .gate {
+    align-self: stretch; background: var(--danger-bg); border: 1px solid #3a2226; border-radius: 8px;
+    padding: 9px 12px; font-size: 12px; color: var(--danger);
+  }
+  .gate .tag { font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: .05em; margin-right: 6px; }
+  .gate .detail { color: #d99; }
+
+  #composer { display: none; border-top: 1px solid var(--border); padding: 12px; background: var(--panel); gap: 8px; }
+  #chatArea.active #composer { display: flex; }
+  #composer input {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 11px 14px; color: var(--text); font-size: 14px; outline: none;
+  }
+  #composer input:focus { border-color: var(--accent); }
+  #composer button {
+    background: var(--accent); color: #fff; border: none; border-radius: 10px;
+    padding: 0 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  #composer button:disabled { opacity: .5; cursor: default; }
+  #composer .hint { padding: 0 12px 8px; font-size: 11px; color: var(--text-dim); }
+
+  .typing { align-self: flex-start; display: flex; gap: 4px; padding: 10px 13px; background: var(--agent-bubble); border-radius: 14px; }
+  .typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: .2s; }
+  .typing span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <h1>Lazarus</h1>
+        <div class="sub">Revenue recovery agent</div>
+      </div>
+    </div>
+    <a href="/dashboard">View dashboard &rarr;</a>
+  </header>
+
+  <div id="picker">
+    <p class="lead">Pick a scenario to simulate a payment failure. Lazarus will react exactly as it
+      would for a real customer - diagnosed cause, merchant-defined bounds, every action gated
+      before it happens.</p>
+    <div id="scenarioList"></div>
+  </div>
+
+  <div id="chatArea">
+    <div id="meta"></div>
+    <div id="messages"></div>
+    <div id="composer">
+      <input id="composerInput" type="text" placeholder="Type a reply to Lazarus..." autocomplete="off" />
+      <button id="sendBtn">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "";
+let currentCaseId = null;
+let sending = false;
+
+async function loadScenarios() {
+  const res = await fetch(API + "/api/chat/scenarios");
+  const scenarios = await res.json();
+  const list = document.getElementById("scenarioList");
+  list.innerHTML = "";
+  scenarios.forEach(s => {
+    const btn = document.createElement("button");
+    btn.className = "scenario";
+    btn.innerHTML =
+      `<div class="cat">${s.category.replace(/_/g, " ")}<span class="amt">₹${s.cart_amount_inr.toLocaleString("en-IN")}</span></div>` +
+      `<div>${s.label}</div>`;
+    btn.onclick = () => startScenario(s.id);
+    list.appendChild(btn);
+  });
+}
+
+function fmtCategory(c) { return (c || "").replace(/_/g, " "); }
+
+async function startScenario(scenarioId) {
+  document.getElementById("picker").style.display = "none";
+  const chatArea = document.getElementById("chatArea");
+  chatArea.style.display = "flex";
+  document.getElementById("messages").innerHTML = "";
+  showTyping();
+
+  let res, data;
+  try {
+    res = await fetch(API + "/api/chat/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenario_id: scenarioId }),
+    });
+    data = await res.json();
+  } catch (e) {
+    hideTyping();
+    showFatalError("Couldn't reach Lazarus at all - is the server running?");
+    return;
+  }
+  hideTyping();
+  if (!res.ok) {
+    showFatalError(data.detail || `Request failed (${res.status})`);
+    return;
+  }
+  currentCaseId = data.case_id;
+
+  const meta = document.getElementById("meta");
+  meta.innerHTML =
+    `<b>${fmtCategory(data.case.category)}</b> &middot; cause: <b>${data.case.cause_category}</b> ` +
+    `&middot; cart ₹${data.case.cart_amount_inr.toLocaleString("en-IN")} &middot; ` +
+    `rule matched: <span class="rule">${data.case.matched_rule_id}</span> ` +
+    `(max discount ${data.case.max_discount_pct}%) &middot; case <code>${data.case_id}</code>`;
+
+  renderMessages(data.messages);
+  const hardStopped = data.messages.some(m => m.kind === "hard_stop");
+  chatArea.classList.toggle("active", !hardStopped);
+  if (!hardStopped) document.getElementById("composerInput").focus();
+}
+
+function renderMessages(messages) {
+  const box = document.getElementById("messages");
+  box.innerHTML = "";
+  messages.forEach(m => box.appendChild(renderMessage(m)));
+  box.scrollTop = box.scrollHeight;
+}
+
+function showFatalError(text) {
+  const box = document.getElementById("messages");
+  const el = document.createElement("div");
+  el.className = "system-note hardstop";
+  el.textContent = text;
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+}
+
+function renderMessage(m) {
+  if (m.kind === "hard_stop") {
+    const el = document.createElement("div");
+    el.className = "system-note hardstop";
+    el.textContent = "Lazarus did not send anything. The strategy engine hard-stopped this case before the agent was even called: " + m.body;
+    return el;
+  }
+  if (m.kind === "gate_rejected") {
+    const el = document.createElement("div");
+    el.className = "gate";
+    el.innerHTML = `<span class="tag">Blocked by policy gate</span>` +
+      `tried <b>${m.meta.tool}</b>(${JSON.stringify(m.meta.arguments)}) &mdash; ` +
+      `<span class="detail">${m.body}</span>`;
+    return el;
+  }
+  if (m.kind === "payment_link") {
+    const el = document.createElement("div");
+    el.className = "card";
+    const discountBadge = m.meta.discount_pct
+      ? `<span class="discount">${m.meta.discount_pct}% off applied</span><br/>`
+      : "";
+    const splitNote = m.meta.split ? `<div class="label">Split payment - ${m.meta.installments} installments</div>` : `<div class="label">Payment link</div>`;
+    el.innerHTML = splitNote + discountBadge +
+      `<a class="pay" href="${m.meta.link}" target="_blank" rel="noopener">Pay now (test mode)</a>` +
+      `<span class="link-url">${m.meta.link}</span>`;
+    return el;
+  }
+  if (m.kind === "text" && m.role === "system") {
+    const el = document.createElement("div");
+    el.className = "system-note";
+    el.textContent = m.body;
+    return el;
+  }
+  const el = document.createElement("div");
+  el.className = "msg " + (m.role === "customer" ? "customer" : "agent");
+  const who = document.createElement("div");
+  who.className = "who";
+  who.textContent = m.role === "customer" ? "You" : "Lazarus";
+  el.appendChild(who);
+  const body = document.createElement("div");
+  body.textContent = m.body || "";
+  el.appendChild(body);
+  return el;
+}
+
+function showTyping() {
+  const box = document.getElementById("messages");
+  const el = document.createElement("div");
+  el.className = "typing";
+  el.id = "typingIndicator";
+  el.innerHTML = "<span></span><span></span><span></span>";
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+}
+function hideTyping() {
+  const el = document.getElementById("typingIndicator");
+  if (el) el.remove();
+}
+
+async function sendMessage() {
+  if (sending || !currentCaseId) return;
+  const input = document.getElementById("composerInput");
+  const text = input.value.trim();
+  if (!text) return;
+  sending = true;
+  document.getElementById("sendBtn").disabled = true;
+  input.value = "";
+
+  const box = document.getElementById("messages");
+  box.appendChild(renderMessage({ role: "customer", kind: "text", body: text }));
+  box.scrollTop = box.scrollHeight;
+  showTyping();
+
+  try {
+    const res = await fetch(API + `/api/chat/${currentCaseId}/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: text }),
+    });
+    const data = await res.json();
+    hideTyping();
+    if (!res.ok) {
+      const el = document.createElement("div");
+      el.className = "system-note hardstop";
+      el.textContent = data.detail || `Request failed (${res.status})`;
+      box.appendChild(el);
+      box.scrollTop = box.scrollHeight;
+    } else {
+      renderMessages(data.messages);
+    }
+  } catch (e) {
+    hideTyping();
+    const el = document.createElement("div");
+    el.className = "system-note";
+    el.textContent = "Something went wrong reaching Lazarus. Try again.";
+    box.appendChild(el);
+  } finally {
+    sending = false;
+    document.getElementById("sendBtn").disabled = false;
+    input.focus();
+  }
+}
+
+document.getElementById("sendBtn").addEventListener("click", sendMessage);
+document.getElementById("composerInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendMessage();
+});
+
+loadScenarios();
+</script>
+</body>
+</html>

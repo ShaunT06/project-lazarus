@@ -1,0 +1,9 @@
+# Vercel's Python builder installs from this file - keep it in sync with
+# pyproject.toml's [project.dependencies] (runtime deps only, no dev/test
+# tooling; Vercel never runs pytest/ruff).
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+pydantic-settings>=2.6
+httpx>=0.27
+psycopg[binary]>=3.2

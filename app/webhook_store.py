@@ -38,3 +38,24 @@ class WebhookEventStore:
                 (event_id, datetime.now(UTC).isoformat()),
             )
             return cur.rowcount == 1
+
+
+class PostgresWebhookEventStore:
+    """Same interface as WebhookEventStore, backed by Neon - used when
+    settings.database_url is set (Vercel's filesystem is ephemeral)."""
+
+    def __init__(self):
+        from app.pg import ensure_schema
+
+        ensure_schema()
+
+    def mark_processed_if_new(self, event_id: str) -> bool:
+        from app.pg import get_conn
+
+        with get_conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO processed_events (event_id, received_at) VALUES (%s, %s) "
+                "ON CONFLICT (event_id) DO NOTHING",
+                (event_id, datetime.now(UTC)),
+            )
+            return cur.rowcount == 1

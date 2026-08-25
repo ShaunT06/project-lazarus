@@ -1,10 +1,16 @@
 """Razorpay webhook receiver.
 
 Verifies X-Razorpay-Signature (HMAC-SHA256 over the raw request body),
-dedupes on x-razorpay-event-id against a persistent store, and returns 2xx
-immediately - real processing (diagnosis -> strategy -> agent) is handed to
-a background task so Razorpay's delivery timeout is never in the critical
-path.
+dedupes on x-razorpay-event-id against a persistent store, then runs
+processing (diagnosis -> strategy -> agent) inline before responding.
+
+That used to be a FastAPI BackgroundTask fired after the response, on the
+theory that Razorpay's delivery timeout shouldn't sit behind an LLM call.
+Vercel's serverless Python runtime doesn't guarantee code scheduled after
+the response is actually sent runs to completion once the function
+returns, so a fire-and-forget task there can silently vanish - a "pipeline
+ran" audit event is worth more than a fast ack we can't back up. One LLM
+turn is a few seconds; that's an acceptable webhook response time here.
 
 Scope note: only `payment.failed` events feed the agent pipeline right
 now. True checkout abandonment (a cart with no payment attempt at all)
@@ -21,7 +27,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.agent import run_case
 from app.audit import AuditLogger
@@ -122,7 +128,7 @@ def _process_event(
         if any(a["tool"] in _OUTREACH_TOOLS for a in result.actions):
             customer_store.record_outreach_event(case.customer_id)
 
-    except Exception as exc:  # background task boundary - must not fail silently
+    except Exception as exc:  # must not raise into the webhook response - log and 200 anyway
         audit.log(event_id, "pipeline_error", {"error": str(exc)})
 
 
@@ -142,7 +148,6 @@ def build_webhook_router(
     @router.post("/webhooks/razorpay")
     async def razorpay_webhook(
         request: Request,
-        background_tasks: BackgroundTasks,
         x_razorpay_signature: str | None = Header(default=None, alias="X-Razorpay-Signature"),
         x_razorpay_event_id: str | None = Header(default=None, alias="x-razorpay-event-id"),
     ):
@@ -170,8 +175,7 @@ def build_webhook_router(
         audit.log(event_id, "webhook_received", {"event": payload.get("event"), "is_new": is_new})
 
         if is_new:
-            background_tasks.add_task(
-                _process_event,
+            _process_event(
                 event_id,
                 payload,
                 audit=audit,
