@@ -30,6 +30,72 @@ from app.tools import TOOL_SCHEMAS, execute
 
 MAX_TURNS = 8  # hard ceiling independent of the correction cap - never loop forever
 
+# What actually happened, in plain terms, per diagnosed cause. Without this
+# the model has no signal beyond a cause_category string and defaults to one
+# generic "your payment didn't go through" message regardless of whether the
+# real reason was insufficient funds, an expired card, or a bank outage -
+# each of which calls for a genuinely different message. Measured on the
+# first live batch run: only 1/9 subscription-failure messages referenced
+# the specific cause before this guidance existed.
+_CAUSE_GUIDANCE: dict[str, str] = {
+    "insufficient_funds": (
+        "Payment failed because the customer's account had insufficient funds at the time. "
+        "Suggest retrying in a few days, or a fresh payment link if funds may be available now."
+    ),
+    "card_declined": (
+        "The card was declined by the issuing bank for an unspecified reason. Ask the "
+        "customer to try a different card or contact their bank, and offer a fresh payment link."
+    ),
+    "expired_card": (
+        "The card on file has expired. Ask the customer to update their card details via a "
+        "fresh payment link - this is a card-details problem, not a funds problem."
+    ),
+    "invalid_card": (
+        "The card details entered were invalid (e.g. a typo or wrong CVV). Ask the customer "
+        "to re-enter their card details via a fresh payment link."
+    ),
+    "authentication_failed": (
+        "The bank's authentication step (OTP/3DS) was not completed in time. Ask the "
+        "customer to retry and make sure to complete the verification step this time."
+    ),
+    "issuer_down": (
+        "The card issuer's systems were temporarily unavailable - this was not the "
+        "customer's fault. Reassure them and mention the payment will be retried automatically."
+    ),
+    "network_error": (
+        "A temporary network or gateway issue caused the failure - not the customer's fault. "
+        "Reassure them and mention an automatic retry."
+    ),
+    "user_cancelled": (
+        "The customer cancelled the payment themselves partway through. Send a low-pressure, "
+        "no-blame check-in asking if they'd like to resume - do not imply anything went wrong."
+    ),
+    "fraud_suspected": (
+        "The payment was flagged by an automated risk check. Be neutral and factual: ask the "
+        "customer to confirm the payment was genuinely theirs and offer a fresh payment link."
+    ),
+    "abandoned_checkout": (
+        "The customer added items to their cart but never attempted payment at all. Send a "
+        "friendly, low-pressure reminder about what's waiting in their cart."
+    ),
+}
+_RECEIVABLE_GUIDANCE = (
+    "This is an overdue B2B invoice, not a failed consumer payment - there was no payment "
+    "attempt at all. Be professional and direct: reference that the invoice is outstanding "
+    "and, if a split/installment payment link is available to you, lead with offering it "
+    "rather than a plain reminder - that's the appropriate remedy for this category."
+)
+_DEFAULT_GUIDANCE = (
+    "The exact cause of the failure is not clearly known. Be helpful and low-pressure, and "
+    "offer a fresh payment link if one is available to you."
+)
+
+
+def _guidance_for(case: CaseContext, cause_category: str) -> str:
+    if case.category == "receivable":
+        return _RECEIVABLE_GUIDANCE
+    return _CAUSE_GUIDANCE.get(cause_category, _DEFAULT_GUIDANCE)
+
 
 SYSTEM_PROMPT_TEMPLATE = """You are Lazarus, a revenue-recovery agent acting for a merchant.
 
@@ -42,7 +108,10 @@ your next proposal; do not repeat a rejected call.
 Case:
 - category: {category}
 - diagnosed cause: {cause_category}
+- what actually happened: {guidance}
 - cart amount (INR): {cart_amount_inr}
+- customer lifetime value (INR): {customer_ltv_inr}
+- times abandoned/failed in the last 7 days: {abandons_last_7d}
 
 Bounds you must operate within:
 - allowed actions: {allowed_actions}
@@ -51,12 +120,28 @@ Bounds you must operate within:
 - cooldown: {cooldown_hours}h since last outreach
 
 Rules:
+- Every action MUST be a real tool call. Never describe, summarize, or plan
+  an action in plain text instead of calling the tool - if you decide
+  send_message is the right move, call send_message; do not write a
+  paragraph explaining that you would send a message. Respond with plain
+  text only once every action for this turn has already been made as a
+  tool call.
 - Write all messages in English only. No other language, no code-switching.
+- Your message MUST reflect "what actually happened" above in concrete terms
+  - do not write a generic "your payment didn't go through" message when you
+  know the specific reason. A card-expiry message and an insufficient-funds
+  message should read nothing alike.
 - Never state a discount, offer, or number in a message you have not already
   gotten approved via a tool call.
-- If nothing appropriate can be done within bounds, call send_message with a
-  neutral, low-pressure nudge and stop.
-- Take one action, then stop calling tools once the case is handled.
+- You may call more than one allowed tool in the same turn when it genuinely
+  helps the customer act immediately - e.g. send_message together with
+  generate_payment_link, rather than a message with nothing to click. Do
+  this whenever both actions are in your allowed actions and appropriate.
+- A high-LTV or first-time case can support a warmer, more accommodating
+  tone; a customer with repeated recent abandonments should get something
+  brief and low-pressure, not a repeat of the same ask.
+- Sending a generic nudge with no specific reasoning should be rare, not
+  your default - only fall back to it when nothing more specific applies.
 """
 
 CHAT_SYSTEM_PROMPT_TEMPLATE = """You are Lazarus, a revenue-recovery agent talking \
@@ -73,7 +158,10 @@ that you can't do that; do not repeat a rejected call.
 Case:
 - category: {category}
 - diagnosed cause: {cause_category}
+- what actually happened: {guidance}
 - cart amount (INR): {cart_amount_inr}
+- customer lifetime value (INR): {customer_ltv_inr}
+- times abandoned/failed in the last 7 days: {abandons_last_7d}
 
 Bounds you must operate within:
 - allowed actions: {allowed_actions}
@@ -82,15 +170,21 @@ Bounds you must operate within:
 - cooldown: {cooldown_hours}h since last outreach
 
 Rules:
+- Every action MUST be a real tool call. Never describe or summarize an
+  action in plain text instead of calling the tool - if send_message is the
+  right move, call send_message; do not write a paragraph saying you would.
 - Write all messages in English only. No other language, no code-switching.
+- Reference "what actually happened" above in concrete terms - do not give a
+  generic "your payment didn't go through" answer when you know the specific
+  reason.
 - Never state a discount, offer, or number in a message you have not already
   gotten approved via a tool call.
 - Be direct and helpful, like a competent support agent. Keep replies short.
 - If nothing appropriate can be done within bounds, say so plainly - do not
   invent an offer you cannot back with an approved tool call.
-- Use send_message to speak to the customer. Only call other tools when the
-  customer's message actually calls for that action (e.g. asking for a new
-  payment link, asking to be reminded later).
+- Use send_message to speak to the customer. Call another tool in the same
+  turn whenever the customer's message calls for it (e.g. asking for a new
+  payment link) rather than promising it and stopping.
 """
 
 
@@ -100,7 +194,10 @@ def _build_system_prompt(
     return template.format(
         category=case.category,
         cause_category=cause_category,
+        guidance=_guidance_for(case, cause_category),
         cart_amount_inr=case.cart_amount_inr,
+        customer_ltv_inr=case.customer_ltv_inr,
+        abandons_last_7d=case.abandons_last_7d,
         allowed_actions=", ".join(strategy.allowed_actions) or "(none)",
         max_discount_pct=strategy.max_discount_pct,
         max_retries=strategy.max_retries,
