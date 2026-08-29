@@ -5,8 +5,23 @@ PRs. Signatures are the real ones so swapping the body for a live API call
 later doesn't touch the agent loop or the policy gate.
 """
 
+import sys
 import uuid
 from typing import Any
+
+
+def _print_console_safe(text: str) -> None:
+    """print() raises UnicodeEncodeError on Windows consoles (cp1252) for a
+    message containing e.g. the Rupee sign - observed crashing a whole batch
+    run on model-generated INR text. This is a display concern, not a
+    business-logic failure, so degrade to a safe replacement rather than
+    losing the run over it."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "ascii"
+        print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
+
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
@@ -96,7 +111,7 @@ def execute(
 ) -> dict[str, Any]:
     if name == "send_message":
         if notify_channel == "console":
-            print(f"[send_message:console] {arguments['body']}")
+            _print_console_safe(f"[send_message:console] {arguments.get('body', '')}")
         return {"status": "sent", "channel": notify_channel}
     if name == "generate_payment_link":
         return {
