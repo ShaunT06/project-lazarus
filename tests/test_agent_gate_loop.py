@@ -16,12 +16,15 @@ from app.strategy import StrategyEngine
 
 
 class ScriptedClient:
-    """Returns queued responses in order; ignores the actual messages sent."""
+    """Returns queued responses in order; records the messages it was called
+    with so tests can assert on what got sent back (e.g. a nudge)."""
 
     def __init__(self, responses: list[LLMResponse]):
         self._responses = list(responses)
+        self.calls: list[list[dict]] = []
 
     def chat(self, messages, tools=None):
+        self.calls.append(list(messages))
         return self._responses.pop(0)
 
 
@@ -88,6 +91,84 @@ def test_approved_call_executes_and_stops(strategy, tmp_path):
     assert run_result.gate_exhausted is False
     assert len(run_result.actions) == 1
     assert run_result.actions[0]["tool"] == "send_message"
+
+
+def test_no_tool_call_on_first_turn_gets_nudged_then_acts(strategy, tmp_path):
+    # Reproduces the observed free-model failure mode: the first turn
+    # reasons in plain text without calling a tool. That should NOT be
+    # accepted as "no action needed" immediately - it should be nudged once.
+    responses = [
+        LLMResponse(
+            content="I need to handle this case...",
+            tool_calls=[],
+            raw_message={"role": "assistant", "content": "I need to handle this case..."},
+        ),
+        make_tool_call("send_message", {"body": "Your card has expired, please update it."}),
+        LLMResponse(
+            content="Done.", tool_calls=[], raw_message={"role": "assistant", "content": "Done."}
+        ),
+    ]
+    result, case = strategy
+    client = ScriptedClient(responses)
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    run_result = run_case(case, "expired_card", result, client, audit, notify_channel="console")
+
+    assert len(run_result.actions) == 1
+    assert run_result.actions[0]["tool"] == "send_message"
+    assert len(client.calls) == 3  # first (no tool), nudge retry, final "done" turn
+    nudge_message = client.calls[1][-1]
+    assert nudge_message["role"] == "user"
+    assert "did not call a tool" in nudge_message["content"]
+
+    log_lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    events = [json.loads(line)["event_type"] for line in log_lines]
+    assert "no_tool_call_nudged" in events
+
+
+def test_no_tool_call_twice_in_a_row_is_accepted_as_no_action(strategy, tmp_path):
+    # The nudge is capped at one retry - if the model still doesn't call a
+    # tool after being nudged, that's accepted as genuine "no action" rather
+    # than nudging forever.
+    responses = [
+        LLMResponse(
+            content="Thinking...",
+            tool_calls=[],
+            raw_message={"role": "assistant", "content": "Thinking..."},
+        ),
+        LLMResponse(
+            content="Still thinking...",
+            tool_calls=[],
+            raw_message={"role": "assistant", "content": "Still thinking..."},
+        ),
+    ]
+    result, case = strategy
+    client = ScriptedClient(responses)
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    run_result = run_case(case, "expired_card", result, client, audit, notify_channel="console")
+
+    assert run_result.actions == []
+    assert len(client.calls) == 2  # exactly one nudge attempt, then accepted
+
+
+def test_no_tool_call_after_an_action_is_accepted_immediately(strategy, tmp_path):
+    # A no-tool-call turn AFTER a real action has already been taken is
+    # genuine completion, not the confusion failure mode - must not nudge.
+    responses = [
+        make_tool_call("send_message", {"body": "Your card has expired, please update it."}),
+        LLMResponse(
+            content="Done.", tool_calls=[], raw_message={"role": "assistant", "content": "Done."}
+        ),
+    ]
+    result, case = strategy
+    client = ScriptedClient(responses)
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    run_result = run_case(case, "expired_card", result, client, audit, notify_channel="console")
+
+    assert len(run_result.actions) == 1
+    assert len(client.calls) == 2  # no nudge inserted after a real action
 
 
 def test_hard_stop_takes_no_action(tmp_path):
