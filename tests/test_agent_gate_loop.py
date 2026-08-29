@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from app.agent import run_case
+import app.agent as agent_module
+from app.agent import continue_conversation, run_case, start_conversation
 from app.audit import AuditLogger
 from app.models import CaseContext
 from app.openrouter_client import LLMResponse, ToolCall
@@ -23,7 +24,7 @@ class ScriptedClient:
         self._responses = list(responses)
         self.calls: list[list[dict]] = []
 
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, **kwargs):
         self.calls.append(list(messages))
         return self._responses.pop(0)
 
@@ -181,3 +182,67 @@ def test_hard_stop_takes_no_action(tmp_path):
 
     assert run_result.actions == []
     assert run_result.gate_exhausted is False
+
+
+def test_chat_stops_at_expired_deadline_before_any_llm_call(strategy, tmp_path, monkeypatch):
+    # Reproduces the real bug: a live chat request sits behind Vercel's 60s
+    # hard function timeout, which kills the whole process before our own
+    # error handling runs. If the deadline has already passed, we must not
+    # call the LLM at all - not even once - and still return a clean result.
+    monkeypatch.setattr(agent_module, "CHAT_TURN_DEADLINE_SECONDS", -1.0)
+    result, case = strategy
+    client = ScriptedClient([])  # would raise IndexError if ever called
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    outcome = start_conversation(
+        case, "expired_card", result, client, audit, notify_channel="console"
+    )
+
+    assert outcome["actions"] == []
+    assert outcome["hard_stop"] is False
+    assert len(client.calls) == 0
+
+    log_lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    events = [json.loads(line)["event_type"] for line in log_lines]
+    assert "time_budget_exhausted" in events
+
+
+def test_chat_completes_normally_within_deadline(strategy, tmp_path):
+    result, case = strategy
+    responses = [
+        make_tool_call("send_message", {"body": "Your card has expired, please update it."}),
+        LLMResponse(
+            content="Done.", tool_calls=[], raw_message={"role": "assistant", "content": "Done."}
+        ),
+    ]
+    client = ScriptedClient(responses)
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    outcome = start_conversation(
+        case, "expired_card", result, client, audit, notify_channel="console"
+    )
+
+    assert len(outcome["actions"]) == 1
+    assert outcome["actions"][0]["tool"] == "send_message"
+
+
+def test_continue_conversation_also_stops_at_expired_deadline(strategy, tmp_path, monkeypatch):
+    monkeypatch.setattr(agent_module, "CHAT_TURN_DEADLINE_SECONDS", -1.0)
+    result, case = strategy
+    client = ScriptedClient([])
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    outcome = continue_conversation(
+        case=case,
+        strategy=result,
+        client=client,
+        audit=audit,
+        messages=[{"role": "system", "content": "..."}],
+        corrections=0,
+        approved_discount_pct=0.0,
+        customer_message="can I get a bigger discount?",
+        notify_channel="console",
+    )
+
+    assert outcome["actions"] == []
+    assert len(client.calls) == 0

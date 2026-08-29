@@ -48,7 +48,7 @@ class OpenRouterClient:
         self,
         api_key: str | None = None,
         model: str | None = None,
-        timeout: float = 60.0,
+        timeout: float = 20.0,
         max_tokens: int = 1024,
     ):
         self._api_key = api_key or settings.openrouter_api_key
