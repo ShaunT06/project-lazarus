@@ -1,9 +1,13 @@
 """Mocked-transport tests - no real OpenRouter API calls in CI. Covers bugs
 found on a live 50-case batch run against z-ai/glm-5.3-flash: a model
 occasionally emits a JSON array instead of an object for tool arguments,
-and the connection can be reset mid-request."""
+and the connection can be reset mid-request. Also covers a bug found on
+the deployed /chat UI: a single chat() call's own internal retry loop
+could alone consume a caller's whole time budget and get hard-killed by
+Vercel's 60s function timeout with no graceful response."""
 
 import json
+import time
 
 import httpx
 import pytest
@@ -114,3 +118,46 @@ def test_cost_usd_is_extracted_from_usage():
     resp = client.chat([{"role": "user", "content": "hi"}])
 
     assert resp.cost_usd == 0.000006
+
+
+def test_already_expired_deadline_makes_no_request_at_all():
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return httpx.Response(200, json=_completion(content="ok"))
+
+    client = make_client(handler)
+    with pytest.raises(TimeoutError):
+        client.chat([{"role": "user", "content": "hi"}], deadline=time.monotonic() - 1)
+
+    assert calls["count"] == 0
+
+
+def test_deadline_stops_retry_loop_promptly_instead_of_sleeping_past_it():
+    # A persistently-retryable failure (429, not the daily-quota kind) would
+    # normally sleep with growing backoff between attempts. A deadline must
+    # cut that short rather than oversleeping past it and only then giving
+    # up - this is what let one call alone burn a caller's whole budget.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "30"}, json={"error": "rate limited"})
+
+    client = make_client(handler)
+    deadline = time.monotonic() + 0.2  # expires well before a 30s Retry-After would
+
+    start = time.monotonic()
+    with pytest.raises(TimeoutError):
+        client.chat([{"role": "user", "content": "hi"}], max_retries=5, deadline=deadline)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 2.0  # nowhere near the 30s Retry-After or 5-retry backoff total
+
+
+def test_deadline_none_behaves_exactly_as_before():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_completion(content="ok"))
+
+    client = make_client(handler)
+    resp = client.chat([{"role": "user", "content": "hi"}])  # no deadline passed
+
+    assert resp.content == "ok"

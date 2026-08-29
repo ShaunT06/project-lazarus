@@ -41,6 +41,7 @@ Two entry points share that loop (_run_turns):
 
 import json
 import time
+from typing import Any
 
 from app.audit import AuditLogger
 from app.models import CaseContext, RunResult, StrategyResult
@@ -274,7 +275,15 @@ def _run_turns(
     rejections: list[dict] = []
     no_tool_call_nudges = 0
     max_no_tool_call_nudges = 1  # one extra chance before accepting "no action" as genuine
-    chat_kwargs = {"max_retries": chat_max_retries} if chat_max_retries is not None else {}
+    chat_kwargs: dict[str, Any] = {}
+    if chat_max_retries is not None:
+        chat_kwargs["max_retries"] = chat_max_retries
+    if deadline is not None:
+        # Passed straight into client.chat() so it bounds that call's ENTIRE
+        # internal retry loop, not just the gap between turns here - a
+        # single call's own retries could otherwise alone consume the whole
+        # budget before this per-turn check ever runs again.
+        chat_kwargs["deadline"] = deadline
 
     for _turn in range(max_turns):
         if deadline is not None and time.monotonic() >= deadline:
