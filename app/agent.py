@@ -22,14 +22,25 @@ Two entry points share that loop (_run_turns):
   - run_case(...): the original one-shot flow (webhook pipeline, batch
     runner) - builds fresh messages, runs to completion, returns RunResult.
     Signature/behavior unchanged - existing tests and scripts depend on it.
+    No wall-clock deadline - a background script can afford to wait.
   - start_conversation(...) / continue_conversation(...): the customer chat
     UI - same loop, same gate, but messages persist across HTTP requests
     (via ConversationStore) so a customer reply re-enters the loop instead
     of starting a new one. The gate re-validates every proposed call on
-    every turn regardless of which entry point got it there.
+    every turn regardless of which entry point got it there. THESE run
+    under a wall-clock deadline (see CHAT_TURN_DEADLINE_SECONDS) - a live
+    HTTP request sits behind a hosting platform's hard function timeout
+    (Vercel: 60s), which kills the whole process before our own error
+    handling can run, producing a bare "can't reach the server" for the
+    customer instead of a clean response. Multiple sequential LLM calls
+    (multi-turn loop, nudge retries) can add up past that ceiling even
+    though each individual call looks fine - stopping proactively with
+    margin to spare converts a hard platform kill into a graceful,
+    on-time HTTP response.
 """
 
 import json
+import time
 
 from app.audit import AuditLogger
 from app.models import CaseContext, RunResult, StrategyResult
@@ -37,6 +48,14 @@ from app.policy_gate import validate
 from app.tools import TOOL_SCHEMAS, execute
 
 MAX_TURNS = 8  # hard ceiling independent of the correction cap - never loop forever
+
+# Vercel kills the whole function at 60s with no chance for our own error
+# handling to run. Stop starting new turns well before that so a slow
+# multi-turn conversation ends in a real (if partial) response instead of
+# a platform-level timeout. Only applied to the live chat entry points -
+# run_case (batch/webhook) has no deadline.
+CHAT_TURN_DEADLINE_SECONDS = 40.0
+CHAT_TURN_MAX_RETRIES = 2  # fail a slow call fast rather than exhausting the deadline on one turn
 
 # What actually happened, in plain terms, per diagnosed cause. Without this
 # the model has no signal beyond a cause_category string and defaults to one
@@ -234,21 +253,38 @@ def _run_turns(
     corrections: int = 0,
     approved_discount_this_run: float = 0.0,
     max_turns: int = MAX_TURNS,
+    deadline: float | None = None,
+    chat_max_retries: int | None = None,
 ) -> tuple[list[dict], int, float, bool, list[dict]]:
     """Runs turns until the model stops calling tools, the correction cap is
-    exceeded (gate_exhausted), or max_turns is hit. Mutates `messages` in
-    place (caller persists it). Returns (actions_this_call, corrections,
+    exceeded (gate_exhausted), max_turns is hit, or `deadline` (a
+    time.monotonic() timestamp) passes. Mutates `messages` in place (caller
+    persists it). Returns (actions_this_call, corrections,
     approved_discount_this_run, gate_exhausted, rejections_this_call) -
     rejections is every gate-rejected proposal in this call, in order,
     regardless of whether it eventually tripped gate_exhausted; the chat UI
-    surfaces these live as the visible proof the fence is real."""
+    surfaces these live as the visible proof the fence is real.
+
+    `deadline` is checked before starting each turn (not mid-request) -
+    stopping there falls through to the same well-defined "ran out of
+    turns" return path as exhausting max_turns, so no separate handling is
+    needed. `chat_max_retries`, when set, caps how many times a single
+    call can retry so one slow turn can't alone exhaust the deadline."""
     actions: list[dict] = []
     rejections: list[dict] = []
     no_tool_call_nudges = 0
     max_no_tool_call_nudges = 1  # one extra chance before accepting "no action" as genuine
+    chat_kwargs = {"max_retries": chat_max_retries} if chat_max_retries is not None else {}
 
     for _turn in range(max_turns):
-        response = client.chat(messages, tools=TOOL_SCHEMAS)
+        if deadline is not None and time.monotonic() >= deadline:
+            audit.log(
+                case.case_id,
+                "time_budget_exhausted",
+                {"turn": _turn, "actions_so_far": len(actions)},
+            )
+            break
+        response = client.chat(messages, tools=TOOL_SCHEMAS, **chat_kwargs)
         audit.log(
             case.case_id,
             "llm_turn",
@@ -470,6 +506,8 @@ def start_conversation(
         audit=audit,
         cap=cap,
         notify_channel=notify_channel,
+        deadline=time.monotonic() + CHAT_TURN_DEADLINE_SECONDS,
+        chat_max_retries=CHAT_TURN_MAX_RETRIES,
     )
 
     return {
@@ -514,6 +552,8 @@ def continue_conversation(
         notify_channel=notify_channel,
         corrections=corrections,
         approved_discount_this_run=approved_discount_pct,
+        deadline=time.monotonic() + CHAT_TURN_DEADLINE_SECONDS,
+        chat_max_retries=CHAT_TURN_MAX_RETRIES,
     )
 
     return {
