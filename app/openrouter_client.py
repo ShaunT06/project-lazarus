@@ -28,6 +28,7 @@ class LLMResponse:
     content: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw_message: dict[str, Any] = field(default_factory=dict)
+    cost_usd: float = 0.0
 
 
 class QuotaExhausted(RuntimeError):
@@ -93,7 +94,16 @@ class OpenRouterClient:
         # immediately instead, with the actual reset time.
         data: dict[str, Any] = {}
         for attempt in range(max_retries + 1):
-            resp = self._client.post("/chat/completions", headers=headers, json=body)
+            try:
+                resp = self._client.post("/chat/completions", headers=headers, json=body)
+            except httpx.TransportError:
+                # Connection reset / timeout / DNS blip - transient, not a
+                # client bug. Observed: "[WinError 10054] An existing
+                # connection was forcibly closed by the remote host".
+                if attempt == max_retries:
+                    raise
+                time.sleep(2 * (attempt + 1))
+                continue
 
             if resp.status_code == 429:
                 if resp.headers.get("X-RateLimit-Remaining") == "0":
@@ -124,10 +134,25 @@ class OpenRouterClient:
         for tc in message.get("tool_calls") or []:
             # Always parse via json.loads - never string-match raw tool args.
             args = json.loads(tc["function"]["arguments"] or "{}")
+            # A model can emit a JSON array (or any non-object) instead of a
+            # proper object here - observed: generate_split_payment_link
+            # called with arguments '["installments"]'. Every downstream
+            # consumer (the policy gate, the tool executors) assumes a dict
+            # and calls .get() on it; coerce to {} rather than crash the
+            # whole batch on one malformed call. An empty dict still lets
+            # the gate reject the call for missing/invalid fields normally.
+            if not isinstance(args, dict):
+                args = {}
             tool_calls.append(ToolCall(id=tc["id"], name=tc["function"]["name"], arguments=args))
 
         return LLMResponse(
-            content=message.get("content"), tool_calls=tool_calls, raw_message=message
+            content=message.get("content"),
+            tool_calls=tool_calls,
+            raw_message=message,
+            # On a paid key this is the real per-call spend OpenRouter billed
+            # (0.0 on a free model) - surfaced so callers can track and cap
+            # cumulative spend rather than trusting an estimate.
+            cost_usd=(data.get("usage") or {}).get("cost", 0.0),
         )
 
     def close(self) -> None:

@@ -47,3 +47,4 @@ class RunResult(BaseModel):
     actions: list[dict[str, Any]] = Field(default_factory=list)
     gate_exhausted: bool = False
     correction_count: int = 0
+    cost_usd: float = 0.0
