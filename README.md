@@ -14,8 +14,8 @@ it cannot override.
 
 ## Status
 
-The full 50-case batch has completed end-to-end: **41 actioned (82%), 2 correctly
-hard-stopped, 7 no-action**, live against the real agent — see
+The full 50-case batch has completed end-to-end: **38 actioned (76%), 2 correctly
+hard-stopped, 10 no-action, 0 errors**, live against the real agent — see
 [`data/metrics_report.md`](data/metrics_report.md) for the full breakdown and honest
 exception list. See [`docs/plan.md`](docs/plan.md) for the architecture and timeline, and
 [`docs/pitch_script.md`](docs/pitch_script.md) for the 5-minute pitch outline.
@@ -65,7 +65,7 @@ aspirational.
 | State serialization / checkout hydration | Not started |
 | Error diagnosis engine | Done — deterministic, unmapped codes fall to `unknown`, no code at all means `abandoned_checkout` |
 | Strategy config engine | Done — hard_stops → rules → defaults, includes a B2B receivables rule |
-| Decision agent (OpenRouter) | Done — capped reject-and-correct loop, live-run against a free tool-calling model (`nvidia/nemotron-3-super-120b-a12b:free`) across the full 50-case batch. **Free-tier only, by explicit project policy** — no paid model or API usage. OpenRouter's free tier shares one account-wide cap (50 requests/day across *all* free models combined, not per-model), so the run spanned two daily quota windows; `scripts/run_batch.py` resumed automatically and re-spent no calls on cases that had already succeeded. |
+| Decision agent (OpenRouter) | Done — capped reject-and-correct loop. Final batch run used a small paid model (`z-ai/glm-5.3-flash`) on a key with an explicit $4 hard spend cap — real cost verified at ~$0.000006/call before running anything, so the full batch cost a fraction of a cent. The code default (`app/config.py`) stays the free `nvidia/nemotron-3-super-120b-a12b:free` so a clone with no paid key still runs for $0; earlier runs on that free model surfaced (and fixed) two real reliability issues worth knowing about: OpenRouter's free tier shares one account-wide cap (50 requests/day across *all* free models combined, not per-model — `scripts/run_batch.py` resumes automatically to work around it), and a smaller model sometimes reasons about the right tool call in plain text instead of emitting one — the agent now nudges once before accepting that as "no action needed." |
 | Policy gate | Done — action/discount/retry/cooldown + message-body scan |
 | Webhook → agent pipeline wiring | Done — `payment.failed` only; checkout abandonment needs separate tracking (not built) |
 | Customer history store (LTV, abandon count, cooldown) | Done, SQLite — LTV/opt-in are placeholders pending real CRM backfill |
