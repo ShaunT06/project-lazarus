@@ -54,14 +54,30 @@ class OpenRouterClient:
         self._api_key = api_key or settings.openrouter_api_key
         self._model = model or settings.openrouter_model
         self._max_tokens = max_tokens
+        self._default_timeout = timeout
         self._client = httpx.Client(base_url=settings.openrouter_base_url, timeout=timeout)
+
+    def _sleep_within_deadline(self, seconds: float, deadline: float | None) -> None:
+        if deadline is not None:
+            seconds = min(seconds, max(0.0, deadline - time.monotonic()))
+        if seconds > 0:
+            time.sleep(seconds)
 
     def chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         max_retries: int = 5,
+        deadline: float | None = None,
     ) -> LLMResponse:
+        """`deadline`, if given, is a time.monotonic() timestamp bounding the
+        ENTIRE call including all retries - not just each individual HTTP
+        request. Without this, a single call's own retry loop (attempts x
+        per-attempt timeout) can alone consume a caller's whole time budget
+        even though no single attempt looks unreasonable - observed live: a
+        Vercel-hosted /chat request got hard-killed at exactly 60s with no
+        graceful response, traced to one chat() call whose own retries ran
+        the full per-turn deadline check never got a chance to re-evaluate."""
         if not self._api_key:
             raise RuntimeError("OPENROUTER_API_KEY is not set")
 
@@ -94,15 +110,27 @@ class OpenRouterClient:
         # immediately instead, with the actual reset time.
         data: dict[str, Any] = {}
         for attempt in range(max_retries + 1):
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "OpenRouter call deadline exceeded before a request could be attempted"
+                    )
+                request_timeout = min(self._default_timeout, remaining)
+            else:
+                request_timeout = self._default_timeout
+
             try:
-                resp = self._client.post("/chat/completions", headers=headers, json=body)
+                resp = self._client.post(
+                    "/chat/completions", headers=headers, json=body, timeout=request_timeout
+                )
             except httpx.TransportError:
                 # Connection reset / timeout / DNS blip - transient, not a
                 # client bug. Observed: "[WinError 10054] An existing
                 # connection was forcibly closed by the remote host".
                 if attempt == max_retries:
                     raise
-                time.sleep(2 * (attempt + 1))
+                self._sleep_within_deadline(2 * (attempt + 1), deadline)
                 continue
 
             if resp.status_code == 429:
@@ -117,7 +145,7 @@ class OpenRouterClient:
                 if attempt == max_retries:
                     resp.raise_for_status()
                 retry_after = float(resp.headers.get("Retry-After", 2 * (attempt + 1)))
-                time.sleep(retry_after)
+                self._sleep_within_deadline(retry_after, deadline)
                 continue
 
             resp.raise_for_status()
@@ -126,7 +154,7 @@ class OpenRouterClient:
                 break
             if attempt == max_retries:
                 raise RuntimeError(f"OpenRouter response missing 'choices': {data}")
-            time.sleep(2 * (attempt + 1))
+            self._sleep_within_deadline(2 * (attempt + 1), deadline)
 
         message = data["choices"][0]["message"]
 
