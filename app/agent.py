@@ -10,6 +10,14 @@ Loop shape:
   default action (logged as gate_exhausted, never a silent catch) -> repeat
   until the LLM stops calling tools or the cap is hit.
 
+  One more wrinkle, found by comparing recorded messages against a live
+  batch run: before any action has been taken, a turn with zero tool calls
+  is nudged once ("you didn't call a tool - call it now") rather than
+  treated as a genuine "no action needed" - a smaller free model reasons
+  about the right call in plain text instead of emitting one far more
+  often than it deliberately declines to act. A no-tool-call turn *after*
+  actions exist is still accepted immediately as real completion.
+
 Two entry points share that loop (_run_turns):
   - run_case(...): the original one-shot flow (webhook pipeline, batch
     runner) - builds fresh messages, runs to completion, returns RunResult.
@@ -236,6 +244,8 @@ def _run_turns(
     surfaces these live as the visible proof the fence is real."""
     actions: list[dict] = []
     rejections: list[dict] = []
+    no_tool_call_nudges = 0
+    max_no_tool_call_nudges = 1  # one extra chance before accepting "no action" as genuine
 
     for _turn in range(max_turns):
         response = client.chat(messages, tools=TOOL_SCHEMAS)
@@ -249,6 +259,31 @@ def _run_turns(
         )
 
         if not response.tool_calls:
+            # Zero tool calls before anything has been done is usually the
+            # model reasoning out loud instead of acting (observed: ~30% of
+            # cases on a small free model), not a genuine "nothing to do"
+            # decision - a real no-action decision happens after actions
+            # have already been taken. Nudge once before accepting it.
+            if not actions and no_tool_call_nudges < max_no_tool_call_nudges:
+                no_tool_call_nudges += 1
+                audit.log(
+                    case.case_id,
+                    "no_tool_call_nudged",
+                    {"text": response.content, "nudge_number": no_tool_call_nudges},
+                )
+                if response.content:
+                    messages.append({"role": "assistant", "content": response.content})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "You did not call a tool. If any action is appropriate for "
+                            "this case within your allowed bounds, call the actual tool "
+                            "now - do not just describe what you would do in text."
+                        ),
+                    }
+                )
+                continue
             audit.log(case.case_id, "agent_finished_no_action", {"text": response.content})
             if response.content:
                 messages.append({"role": "assistant", "content": response.content})
