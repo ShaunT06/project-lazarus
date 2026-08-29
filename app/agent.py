@@ -18,6 +18,14 @@ Loop shape:
   often than it deliberately declines to act. A no-tool-call turn *after*
   actions exist is still accepted immediately as real completion.
 
+  On the live chat path only, the loop also stops the moment a turn has
+  cleanly delivered a reply (see stop_after_reply). Left to run, the loop
+  reliably spent one extra LLM call per customer message just to hear the
+  model say it was finished: 170 of the 179 recorded runs ended in a turn
+  with zero tool calls, and nothing in that turn is ever rendered, since
+  the chat UI builds its bubbles from executed actions rather than from
+  assistant prose. That call was pure latency in front of a waiting human.
+
 Two entry points share that loop (_run_turns):
   - run_case(...): the original one-shot flow (webhook pipeline, batch
     runner) - builds fresh messages, runs to completion, returns RunResult.
@@ -57,6 +65,11 @@ MAX_TURNS = 8  # hard ceiling independent of the correction cap - never loop for
 # run_case (batch/webhook) has no deadline.
 CHAT_TURN_DEADLINE_SECONDS = 40.0
 CHAT_TURN_MAX_RETRIES = 2  # fail a slow call fast rather than exhausting the deadline on one turn
+
+# The one tool whose result the customer actually reads as a reply. A bare
+# payment link with no words is not a complete answer, so a turn that
+# produced only a link still deserves another turn to speak.
+_CUSTOMER_VISIBLE_TOOL = "send_message"
 
 # What actually happened, in plain terms, per diagnosed cause. Without this
 # the model has no signal beyond a cause_category string and defaults to one
@@ -256,6 +269,7 @@ def _run_turns(
     max_turns: int = MAX_TURNS,
     deadline: float | None = None,
     chat_max_retries: int | None = None,
+    stop_after_reply: bool = False,
 ) -> tuple[list[dict], int, float, bool, list[dict]]:
     """Runs turns until the model stops calling tools, the correction cap is
     exceeded (gate_exhausted), max_turns is hit, or `deadline` (a
@@ -270,7 +284,26 @@ def _run_turns(
     stopping there falls through to the same well-defined "ran out of
     turns" return path as exhausting max_turns, so no separate handling is
     needed. `chat_max_retries`, when set, caps how many times a single
-    call can retry so one slow turn can't alone exhaust the deadline."""
+    call can retry so one slow turn can't alone exhaust the deadline.
+
+    `stop_after_reply` ends the loop as soon as a turn has cleanly delivered
+    a customer-visible reply (an approved send_message with nothing rejected
+    alongside it), instead of spending another round trip asking a model
+    that has already said its piece whether it is done. Measured on the
+    recorded audit log: 170 of 179 runs ended with a final LLM call that
+    returned no tool calls at all, and that call's text is rendered nowhere
+    - the chat UI builds its bubbles from `actions`, never from trailing
+    assistant prose. It bought the customer nothing while costing a full
+    round trip, and these are the turns that ramble (p90 output ~4.5k
+    characters, i.e. up against max_tokens), so they were often the slowest
+    call in the request. Cutting it roughly halves perceived chat latency.
+
+    Opt-in, and used only by the live chat entry points: the batch/webhook
+    path (run_case) has no impatient human waiting on it and its published
+    recovery numbers were measured with the extra turn in place. A turn
+    with any gate rejection never stops here regardless of the flag - the
+    model must see the rejection and get its chance to correct, which is
+    the entire point of the fence."""
     actions: list[dict] = []
     rejections: list[dict] = []
     no_tool_call_nudges = 0
@@ -336,6 +369,8 @@ def _run_turns(
 
         messages.append(response.raw_message)
         tool_result_messages = []
+        replied_this_turn = False
+        rejected_this_turn = False
 
         for tc in response.tool_calls:
             decision = validate(
@@ -353,6 +388,8 @@ def _run_turns(
                     {"tool": tc.name, "arguments": tc.arguments, "result": result},
                 )
                 actions.append({"tool": tc.name, "arguments": tc.arguments, "result": result})
+                if tc.name == _CUSTOMER_VISIBLE_TOOL:
+                    replied_this_turn = True
                 if tc.name in ("generate_payment_link", "generate_split_payment_link"):
                     approved_discount_this_run = max(
                         approved_discount_this_run, float(tc.arguments.get("discount_pct", 0) or 0)
@@ -362,6 +399,7 @@ def _run_turns(
                 )
             else:
                 corrections += 1
+                rejected_this_turn = True
                 audit.log(
                     case.case_id,
                     "tool_rejected",
@@ -406,6 +444,14 @@ def _run_turns(
                 )
 
         messages.extend(tool_result_messages)
+
+        if stop_after_reply and replied_this_turn and not rejected_this_turn:
+            audit.log(
+                case.case_id,
+                "stopped_after_reply",
+                {"turn": _turn, "tool_calls_this_turn": len(response.tool_calls)},
+            )
+            break
 
     return actions, corrections, approved_discount_this_run, False, rejections
 
@@ -517,6 +563,7 @@ def start_conversation(
         notify_channel=notify_channel,
         deadline=time.monotonic() + CHAT_TURN_DEADLINE_SECONDS,
         chat_max_retries=CHAT_TURN_MAX_RETRIES,
+        stop_after_reply=True,
     )
 
     return {
@@ -563,6 +610,7 @@ def continue_conversation(
         approved_discount_this_run=approved_discount_pct,
         deadline=time.monotonic() + CHAT_TURN_DEADLINE_SECONDS,
         chat_max_retries=CHAT_TURN_MAX_RETRIES,
+        stop_after_reply=True,
     )
 
     return {

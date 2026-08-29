@@ -226,6 +226,149 @@ def test_chat_completes_normally_within_deadline(strategy, tmp_path):
     assert outcome["actions"][0]["tool"] == "send_message"
 
 
+def test_chat_stops_as_soon_as_the_customer_has_a_reply(strategy, tmp_path):
+    # The latency fix: once an approved send_message has gone out and
+    # nothing was rejected, the chat path must not spend another LLM round
+    # trip confirming the model is finished. That trailing turn's text is
+    # never rendered (the UI builds bubbles from `actions`), so it was pure
+    # wall-clock cost in front of a waiting customer.
+    result, case = strategy
+    responses = [
+        make_tool_call("send_message", {"body": "Your card has expired, please update it."}),
+        LLMResponse(
+            content="Done.", tool_calls=[], raw_message={"role": "assistant", "content": "Done."}
+        ),
+    ]
+    client = ScriptedClient(responses)
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    outcome = start_conversation(
+        case, "expired_card", result, client, audit, notify_channel="console"
+    )
+
+    assert len(client.calls) == 1  # the confirmation turn is gone
+    assert [a["tool"] for a in outcome["actions"]] == ["send_message"]
+
+    log_lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    events = [json.loads(line)["event_type"] for line in log_lines]
+    assert "stopped_after_reply" in events
+
+
+def test_chat_still_takes_another_turn_when_the_gate_rejected_something(strategy, tmp_path):
+    # Stopping early must never swallow a correction: if the gate rejected a
+    # call in the same turn as the reply, the model has to see the rejection
+    # and get its chance to correct. Latency does not outrank the fence.
+    result, case = strategy
+    turn_one = LLMResponse(
+        content=None,
+        tool_calls=[
+            ToolCall(id="call_1", name="send_message", arguments={"body": "Sorted - here you go."}),
+            ToolCall(id="call_2", name="generate_payment_link", arguments={"discount_pct": 50}),
+        ],
+        raw_message={
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "send_message",
+                        "arguments": json.dumps({"body": "Sorted - here you go."}),
+                    },
+                },
+                {
+                    "id": "call_2",
+                    "type": "function",
+                    "function": {
+                        "name": "generate_payment_link",
+                        "arguments": json.dumps({"discount_pct": 50}),
+                    },
+                },
+            ],
+        },
+    )
+    responses = [
+        turn_one,
+        make_tool_call("send_message", {"body": "No discount is available on this one."}),
+    ]
+    client = ScriptedClient(responses)
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    outcome = start_conversation(
+        case, "expired_card", result, client, audit, notify_channel="console"
+    )
+
+    assert len(client.calls) == 2  # did not stop on the rejected turn
+    assert [a["tool"] for a in outcome["actions"]] == ["send_message", "send_message"]
+    assert len(outcome["rejections"]) == 1
+
+
+def test_chat_keeps_going_when_a_turn_produced_only_a_link(strategy, tmp_path):
+    # A payment link with no words is not a reply - the customer would see a
+    # bare button and no explanation, so the loop must continue until the
+    # agent actually says something.
+    result, case = strategy
+    responses = [
+        make_tool_call("generate_payment_link", {"discount_pct": 0}),
+        make_tool_call("send_message", {"body": "Here is a fresh link to update your card."}),
+    ]
+    client = ScriptedClient(responses)
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    outcome = start_conversation(
+        case, "expired_card", result, client, audit, notify_channel="console"
+    )
+
+    assert len(client.calls) == 2
+    assert [a["tool"] for a in outcome["actions"]] == ["generate_payment_link", "send_message"]
+
+
+def test_continue_conversation_stops_after_a_clean_reply(strategy, tmp_path):
+    result, case = strategy
+    responses = [
+        make_tool_call("send_message", {"body": "I can't go beyond what's approved here."}),
+        LLMResponse(
+            content="Done.", tool_calls=[], raw_message={"role": "assistant", "content": "Done."}
+        ),
+    ]
+    client = ScriptedClient(responses)
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    outcome = continue_conversation(
+        case=case,
+        strategy=result,
+        client=client,
+        audit=audit,
+        messages=[{"role": "system", "content": "..."}],
+        corrections=0,
+        approved_discount_pct=0.0,
+        customer_message="can I get a bigger discount?",
+        notify_channel="console",
+    )
+
+    assert len(client.calls) == 1
+    assert [a["tool"] for a in outcome["actions"]] == ["send_message"]
+
+
+def test_batch_path_keeps_the_confirmation_turn(strategy, tmp_path):
+    # run_case (webhook/batch) is deliberately NOT changed - no human is
+    # waiting on it, and the published recovery numbers were measured with
+    # the extra turn in place.
+    result, case = strategy
+    responses = [
+        make_tool_call("send_message", {"body": "Your card has expired, please update it."}),
+        LLMResponse(
+            content="Done.", tool_calls=[], raw_message={"role": "assistant", "content": "Done."}
+        ),
+    ]
+    client = ScriptedClient(responses)
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+
+    run_case(case, "expired_card", result, client, audit, notify_channel="console")
+
+    assert len(client.calls) == 2
+
+
 def test_continue_conversation_also_stops_at_expired_deadline(strategy, tmp_path, monkeypatch):
     monkeypatch.setattr(agent_module, "CHAT_TURN_DEADLINE_SECONDS", -1.0)
     result, case = strategy
