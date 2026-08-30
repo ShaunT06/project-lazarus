@@ -6,10 +6,26 @@ libSQL is a SQLite fork with a wire-compatible dialect, so every query
 here is the same `?`-placeholder SQL the local SQLite classes use (see
 audit.py/webhook_store.py/customer_store.py/conversation_store.py/
 strategy_store.py for the pairs) - only the connection source changes.
-One short-lived client per call, not a pool: each Vercel invocation is a
-fresh, isolated process, so there's nothing to pool across requests.
+
+One client per process, reused - not one per call. It used to be one per
+call (opened and closed every single time inside `with get_client():`),
+on the reasoning that "each Vercel invocation is a fresh, isolated
+process, so there's nothing to pool across requests" - true, but beside
+the point: a single chat message makes ~10-15 of these calls within the
+SAME invocation (every audit.log() during the agent loop, plus the
+conversation/customer store reads and writes around it), and
+`create_client_sync` is not a cheap handle - it spins up its own
+background thread with its own asyncio event loop
+(libsql_client/sync.py's `_AsyncExecutor`) every time, then tears both
+down on close. That cost was being paid a dozen times per customer
+message, stacked directly in front of a live HTTP response. One client,
+created lazily on first use and kept for the life of the process,
+amortizes it to (at most) once per warm invocation instead of once per
+store call - and costs nothing extra on a cold one, since the old code
+paid this exact price on its very first call too.
 """
 
+import threading
 from contextlib import contextmanager
 
 import libsql_client
@@ -88,12 +104,39 @@ _SCHEMA_STATEMENTS = [
 ]
 
 _initialized = False
+_client: libsql_client.ClientSync | None = None
+_lock = threading.RLock()  # reentrant: _ensure_schema_once nests through _get_or_create_client
 
 
 def _raw_client():
     return libsql_client.create_client_sync(
         settings.database_url, auth_token=settings.turso_auth_token
     )
+
+
+def _get_or_create_client():
+    global _client
+    with _lock:
+        if _client is None or _client.closed:
+            _client = _raw_client()
+        return _client
+
+
+def _discard_client() -> None:
+    """Called when a call on the shared client raised - a transient
+    network blip could leave the underlying connection/executor in a bad
+    state, so the next caller should get a fresh one rather than
+    reusing (and likely re-failing on) a known-broken client. Best-effort
+    close: if it's already broken, closing it may also raise, and that's
+    not worth surfacing over the original error."""
+    global _client
+    with _lock:
+        if _client is not None:
+            try:
+                _client.close()
+            except Exception:
+                pass
+            _client = None
 
 
 @contextmanager
@@ -104,25 +147,34 @@ def get_client():
     create_app()` runs on import, for uvicorn/Vercel), so if connecting
     happened in __init__ instead, merely having DATABASE_URL set with a
     not-yet-valid token would crash the whole process on import, before a
-    single request ever arrived."""
+    single request ever arrived.
+
+    Yields the one process-wide client (see the module docstring for why
+    this is no longer a fresh client per call) and does not close it on
+    exit - only a failed call discards it, via `_discard_client`."""
     _ensure_schema_once()
-    client = _raw_client()
+    client = _get_or_create_client()
     try:
         yield client
-    finally:
-        client.close()
+    except Exception:
+        _discard_client()
+        raise
 
 
 def _ensure_schema_once() -> None:
     global _initialized
     if _initialized:
         return
-    client = _raw_client()
-    try:
-        client.batch(_SCHEMA_STATEMENTS)
-    finally:
-        client.close()
-    _initialized = True
+    with _lock:
+        if _initialized:
+            return
+        client = _get_or_create_client()
+        try:
+            client.batch(_SCHEMA_STATEMENTS)
+        except Exception:
+            _discard_client()
+            raise
+        _initialized = True
 
 
 def ensure_schema() -> None:
