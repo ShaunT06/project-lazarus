@@ -1,37 +1,78 @@
-"""Audio transport: Pipecat over WebRTC (browser) or Plivo's Audio
-Streaming websocket (real phone) - phase 2/3. Both paths build the same
-pipeline shape around app/voice/session.py, just swapping the transport:
+"""Audio transport: Pipecat over WebRTC (browser), phase 2. Real phone
+(Plivo, phase 3) will reuse the same `_assemble()` shape with a different
+transport once wired.
 
-    mic/phone audio -> VAD -> Sarvam STT -> [ session.say() ] -> Sarvam TTS -> audio out
+The pipeline is deliberately thin:
 
-`available()` is checked by app/voice_routes.py before any route tries to
-actually place a call - this module is safe to import even when the
-`voice` extra (pipecat-ai, plivo) isn't installed; only calling
-build_browser_pipeline()/build_plivo_pipeline() without it raises.
+    browser mic -> WebRTC -> VAD -> Sarvam STT -> [ session.say() ] -> Sarvam TTS -> WebRTC
 
-Real-time pipeline assembly (SmallWebRTCTransport / PlivoFrameSerializer,
-Silero VAD, the frame-processor bridge into session.say()) lands once the
-`voice` extra is confirmed installable in this environment - see
-docs/voice.md for current status.
+There is no LLM node in that list on purpose (ADR-001 in lazarusV2, the
+design this mirrors): the model is buried inside app/voice/dialogue.py,
+behind the envelope clamp and verify.verify_utterance(). What flows out of
+this pipeline is text that has already been cleared to be spoken.
+
+Speech is Sarvam only, English-only - matches this project's existing
+English-only convention for text (see app/tools.py's send_message), so
+there's no Hinglish/script-mode handling to carry over from lazarusV2.
+
+Written against pipecat-ai 1.8.1's actual API (confirmed via introspection,
+not copied blind from lazarusV2's presumably-older pinned version) -
+notably PipelineTask/PipelineRunner here, not the PipelineWorker/
+WorkerRunner names an older pipecat used.
 """
 
+from __future__ import annotations
+
+import asyncio
 from typing import Any
 
+from app.audit import AuditLogger
 from app.config import settings
+from app.voice.session import CallSession
 
 PIPECAT_HINT = "pipecat is not installed - pip install -e '.[voice]'"
 
+# How long a call waits in silence before a nudge, and how many nudges
+# before hanging up - mirrors dialogue.py's _MAX_SILENCES for the
+# text-simulated path, just driven by a real idle timer here.
+_IDLE_TIMEOUT_SECS = 10.0
+
 
 def _imports() -> dict[str, Any]:
+    # Every name below is re-exported through the returned dict, not used
+    # directly in this function - that's the point (see the module
+    # docstring), so ruff's unused-import check is a false positive here.
     try:
         from pipecat.audio.vad.silero import SileroVADAnalyzer  # noqa: F401
+        from pipecat.audio.vad.vad_analyzer import VADParams  # noqa: F401
+        from pipecat.frames.frames import (  # noqa: F401
+            EndFrame,
+            InterruptionFrame,
+            TranscriptionFrame,
+            TTSSpeakFrame,
+            UserStartedSpeakingFrame,
+        )
         from pipecat.pipeline.pipeline import Pipeline  # noqa: F401
-        from pipecat.services.sarvam.stt import SarvamSTTService  # noqa: F401
-        from pipecat.services.sarvam.tts import SarvamTTSService  # noqa: F401
+        from pipecat.pipeline.runner import PipelineRunner  # noqa: F401
+        from pipecat.pipeline.task import PipelineParams, PipelineTask  # noqa: F401
+        from pipecat.processors.audio.vad_processor import VADProcessor  # noqa: F401
+        from pipecat.processors.frame_processor import (  # noqa: F401
+            FrameDirection,
+            FrameProcessor,
+        )
+        from pipecat.services.sarvam.stt import SarvamSTTService, SarvamSTTSettings  # noqa: F401
+        from pipecat.services.sarvam.tts import SarvamTTSService, SarvamTTSSettings  # noqa: F401
+        from pipecat.transcriptions.language import Language  # noqa: F401
+        from pipecat.transports.base_transport import TransportParams  # noqa: F401
+        from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection  # noqa: F401
+        from pipecat.transports.smallwebrtc.request_handler import (  # noqa: F401
+            SmallWebRTCRequest,
+            SmallWebRTCRequestHandler,
+        )
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport  # noqa: F401
     except ImportError as exc:  # pragma: no cover - env dependent
         raise RuntimeError(PIPECAT_HINT) from exc
-    return {}
+    return dict(locals())
 
 
 def available() -> tuple[bool, str]:
@@ -45,15 +86,172 @@ def available() -> tuple[bool, str]:
     return True, "ready"
 
 
-def build_browser_pipeline(*_args: Any, **_kwargs: Any) -> Any:
-    _imports()
-    raise NotImplementedError(
-        "browser WebRTC pipeline assembly lands in phase 2 - see docs/voice.md"
+def _stt_and_tts(P: dict[str, Any]) -> tuple[Any, Any]:
+    lang = P["Language"].EN_IN
+    stt = P["SarvamSTTService"](
+        api_key=settings.sarvam_api_key,
+        settings=P["SarvamSTTSettings"](model=settings.sarvam_stt_model, language=lang),
     )
+    tts_settings = P["SarvamTTSSettings"](model=settings.sarvam_tts_model, language=lang)
+    if settings.sarvam_tts_voice:
+        tts_settings.voice = settings.sarvam_tts_voice
+    tts = P["SarvamTTSService"](api_key=settings.sarvam_api_key, settings=tts_settings)
+    return stt, tts
 
 
-def build_plivo_pipeline(*_args: Any, **_kwargs: Any) -> Any:
-    _imports()
-    raise NotImplementedError(
-        "Plivo Audio Streaming pipeline assembly lands in phase 3 - see docs/voice.md"
+def _build_bridge(P: dict[str, Any]):
+    """The one custom processor: a final transcript in, a cleared reply out.
+
+    Runs app/voice/session.say() - the exact same function the text-
+    simulated /voice endpoint calls - in a worker thread, since it's sync
+    code (sync stores, sync OpenRouterClient) being driven from Pipecat's
+    async pipeline. A fresh OpenRouterClient is created per turn rather
+    than held across the call, matching how every other entry point in
+    this project (app/chat.py, app/voice_routes.py) creates one per
+    request rather than keeping a live client around as long-lived state.
+    """
+    FrameProcessor = P["FrameProcessor"]
+    FrameDirection = P["FrameDirection"]
+    TranscriptionFrame = P["TranscriptionFrame"]
+    TTSSpeakFrame = P["TTSSpeakFrame"]
+    EndFrame = P["EndFrame"]
+    InterruptionFrame = P["InterruptionFrame"]
+    UserStartedSpeakingFrame = P["UserStartedSpeakingFrame"]
+
+    class _DialogueBridge(FrameProcessor):
+        def __init__(
+            self, call_session: CallSession, audit: AuditLogger, notify_channel: str, **kwargs
+        ):
+            super().__init__(**kwargs)
+            self._call = call_session
+            self._audit = audit
+            self._notify_channel = notify_channel
+            self._agent_speaking = False
+
+        async def process_frame(self, frame, direction) -> None:
+            await super().process_frame(frame, direction)
+
+            if isinstance(frame, UserStartedSpeakingFrame):
+                await self.push_frame(frame, direction)
+                # Barge-in: a caller talking over the agent interrupts it
+                # immediately rather than queueing behind the current line.
+                if self._agent_speaking:
+                    await self.push_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
+                return
+
+            if not isinstance(frame, TranscriptionFrame) or not (frame.text or "").strip():
+                await self.push_frame(frame, direction)
+                return
+
+            said = frame.text.strip()
+            from app.openrouter_client import OpenRouterClient
+            from app.voice import session as voice_session
+
+            client = OpenRouterClient()
+            try:
+                turn = await asyncio.to_thread(
+                    voice_session.say,
+                    self._call,
+                    said,
+                    self._audit,
+                    chat_client=client,
+                    notify_channel=self._notify_channel,
+                )
+            except Exception:
+                await self.push_frame(EndFrame(), FrameDirection.DOWNSTREAM)
+                return
+            finally:
+                client.close()
+
+            if turn.text:
+                self._agent_speaking = True
+                await self.push_frame(TTSSpeakFrame(turn.text), FrameDirection.DOWNSTREAM)
+                self._agent_speaking = False
+
+            if self._call.ended:
+                await self.push_frame(EndFrame(), FrameDirection.DOWNSTREAM)
+
+    return _DialogueBridge
+
+
+def _assemble(
+    P: dict[str, Any],
+    transport: Any,
+    call_session: CallSession,
+    audit: AuditLogger,
+    opening_text: str,
+    *,
+    notify_channel: str,
+) -> tuple[Any, Any]:
+    """The transport-agnostic half of a call: pipeline shape and event
+    wiring. Phase 3's Plivo transport will share this once wired, the same
+    way lazarusV2's telephony.py reuses transport._assemble."""
+    stt, tts = _stt_and_tts(P)
+    bridge = _build_bridge(P)(call_session, audit, notify_channel)
+    vad_params = P["VADParams"]()
+
+    pipeline = P["Pipeline"](
+        [
+            transport.input(),
+            P["VADProcessor"](vad_analyzer=P["SileroVADAnalyzer"](params=vad_params)),
+            stt,
+            bridge,
+            tts,
+            transport.output(),
+        ]
     )
+    task = P["PipelineTask"](
+        pipeline,
+        params=P["PipelineParams"](),
+        idle_timeout_secs=_IDLE_TIMEOUT_SECS,
+        cancel_on_idle_timeout=False,
+    )
+
+    @task.event_handler("on_idle_timeout")
+    async def _on_idle(_task):
+        from app.voice import session as voice_session
+
+        if call_session.ended:
+            return
+        turn = await asyncio.to_thread(voice_session.silence, call_session, audit)
+        if turn.text:
+            await task.queue_frame(P["TTSSpeakFrame"](turn.text))
+        if call_session.ended:
+            await task.queue_frame(P["EndFrame"]())
+
+    @transport.event_handler("on_client_connected")
+    async def _on_connected(_transport, _client):
+        await task.queue_frame(P["TTSSpeakFrame"](opening_text))
+
+    @transport.event_handler("on_client_disconnected")
+    async def _on_disconnected(_transport, _client):
+        from app.voice import session as voice_session
+
+        if not call_session.ended:
+            await asyncio.to_thread(voice_session.end, call_session, audit, "hung_up")
+
+    runner = P["PipelineRunner"](handle_sigint=False)
+    return task, runner
+
+
+async def run_browser_call(
+    webrtc_connection: Any,
+    call_session: CallSession,
+    audit: AuditLogger,
+    opening_text: str,
+    *,
+    notify_channel: str = "console",
+) -> None:
+    """Build and run the pipeline for one browser call. Fire-and-forget:
+    the caller (app/voice_routes.py) starts this as a background task and
+    returns the SDP answer immediately - the call keeps running for as
+    long as the browser tab stays connected."""
+    P = _imports()
+    transport = P["SmallWebRTCTransport"](
+        webrtc_connection=webrtc_connection,
+        params=P["TransportParams"](audio_in_enabled=True, audio_out_enabled=True),
+    )
+    task, runner = _assemble(
+        P, transport, call_session, audit, opening_text, notify_channel=notify_channel
+    )
+    await runner.run(task)

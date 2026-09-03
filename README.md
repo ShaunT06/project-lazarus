@@ -76,7 +76,7 @@ aspirational.
 | Customer chat UI (`/chat`) | Done — multi-turn, same agent loop and policy gate as the webhook pipeline; failure trigger is simulated in-process (no real Razorpay webhook delivery needed for a demo), clearly logged as `is_synthetic: true` |
 | Merchant dashboard (`/dashboard`) | Done — batch-run metrics, live case list, per-case audit trail + transcript, real-time activity feed, and a live-editable strategy config (edits apply to the next case immediately, no redeploy) |
 | Hosting (Vercel) | Done — see [Deploying to Vercel](#deploying-to-vercel). Storage auto-switches to Turso (libSQL) when `DATABASE_URL` is set, since Vercel's filesystem is ephemeral; local dev is unaffected and stays on SQLite/JSONL |
-| Voice channel (`/voice`) | **Phase 1 done, phase 2/3 not started** — see [`docs/voice.md`](docs/voice.md). The deterministic architecture (pre-dial gate, per-turn dialogue engine, verify-before-speak, call session, in-call tool closure, post-call reconciliation) is real and tested, driven today through a text-simulated turn so it's demoable with zero new paid services. Real speech (Sarvam STT/TTS over Pipecat/WebRTC) and ringing a real phone (Plivo) are the next phases, gated behind a separate `voice` install extra and API keys neither of which this environment has yet |
+| Voice channel (`/voice`) | **Phases 1 and 2 done, phase 3 not started** — see [`docs/voice.md`](docs/voice.md). Phase 1: the deterministic architecture (pre-dial gate, per-turn dialogue engine, verify-before-speak, call session, in-call tool closure, post-call reconciliation), text-simulated, fully tested. Phase 2: real Sarvam STT/TTS over a Pipecat/WebRTC browser call, verified end-to-end with a scripted WebRTC client (checks actual audio sample values, not just "frames arrived") since the dev sandbox blocks real microphone access — real speech authenticates, the handshake completes, and genuine synthesized audio flows back; live transcription accuracy still needs a human tester in an ordinary browser. Ringing a real phone (Plivo) is phase 3, not started |
 
 ## Live demo
 
@@ -94,8 +94,9 @@ aspirational.
   a text thread: a pre-dial gate (consent, cooldown, quiet hours, contact budget) runs before
   the call is even placed, every proposed utterance is checked against the envelope before
   it's "spoken", and a commitment is never reported as agreed unless its confirmation message
-  actually sent. Real speech isn't wired up yet (see [`docs/voice.md`](docs/voice.md)), so a
-  customer's turn is typed rather than spoken — the banner on the page says so.
+  actually sent. Type the customer's side, or — when `SARVAM_API_KEY` is configured and
+  `pip install -e ".[voice]"` has run — click "Connect real audio" for an actual voice call
+  over WebRTC (see [`docs/voice.md`](docs/voice.md) for what's verified vs. not yet).
 
 ## Quick start
 

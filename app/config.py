@@ -50,8 +50,16 @@ class Settings(BaseSettings):
 
     sarvam_api_key: str = ""
     sarvam_base_url: str = "https://api.sarvam.ai"
-    sarvam_stt_model: str = "saarika:v2"
-    sarvam_tts_model: str = "bulbul:v2"
+    # pipecat-ai 1.8.1's SarvamSTTService only accepts saaras:v3/v4 - the
+    # older saarika:v2 name (used by some other Sarvam SDK versions/
+    # lazarusV2's pinned pipecat) raises ValueError here. Confirmed via a
+    # real WebRTC call that crashed on this before the fix.
+    sarvam_stt_model: str = "saaras:v3"
+    # bulbul:v2 is deprecated server-side as of this writing ("400: Model
+    # 'bulbul:v2' has been deprecated. Please use 'bulbul:v3' instead.") -
+    # confirmed by a real failed call before this fix; pipecat's own default
+    # still points at v2, so this can't be left unset.
+    sarvam_tts_model: str = "bulbul:v3"
     sarvam_tts_voice: str = ""
 
     plivo_auth_id: str = ""

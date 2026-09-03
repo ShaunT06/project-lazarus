@@ -11,6 +11,7 @@ Reuses app.chat's SCENARIO catalogue rather than duplicating it - a
 about to type or talk.
 """
 
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Any
@@ -38,6 +39,21 @@ class StartCallRequest(BaseModel):
 
 class TurnRequest(BaseModel):
     said: str
+
+
+# Lazily built the first time a real audio call is actually offered, so
+# importing this module never requires pipecat to be installed - only
+# placing a real call does. One handler per process, since it tracks every
+# live peer connection by pc_id (pipecat's own SmallWebRTCRequestHandler
+# design, not something this project added).
+_webrtc_handler_holder: dict[str, Any] = {}
+
+
+def _get_webrtc_handler(transport_module) -> Any:
+    if "handler" not in _webrtc_handler_holder:
+        P = transport_module._imports()
+        _webrtc_handler_holder["handler"] = P["SmallWebRTCRequestHandler"]()
+    return _webrtc_handler_holder["handler"]
 
 
 def build_voice_router(
@@ -144,6 +160,43 @@ def build_voice_router(
 
         _save(call_session)
         return call_session.public()
+
+    @router.post("/api/voice/{call_id}/offer")
+    async def call_offer(call_id: str, req: dict):
+        """WebRTC SDP offer/answer exchange - phase 2. The call must already
+        exist (POST /api/voice/start first, same as the text-simulated
+        path) - this only attaches real audio to it. From here on, every
+        customer utterance reaches app/voice/session.say() through
+        app/voice/transport.py's pipeline instead of this router's /turn
+        endpoint, but it's the exact same function either way."""
+        ok, reason = transport.available()
+        if not ok:
+            raise HTTPException(status_code=503, detail=reason)
+
+        call_session = voice_session.get_session(call_id)
+        if call_session is None:
+            raise HTTPException(status_code=404, detail="unknown call_id, or the call has ended")
+        if not call_session.transcript:
+            raise HTTPException(status_code=409, detail="call has no opening turn yet")
+
+        P = transport._imports()
+        webrtc_request = P["SmallWebRTCRequest"].from_dict(req)
+        opening_text = call_session.transcript[0]["text"]
+
+        async def _on_connection(connection: Any) -> None:
+            asyncio.create_task(
+                transport.run_browser_call(
+                    connection,
+                    call_session,
+                    audit,
+                    opening_text,
+                    notify_channel=settings.notify_channel,
+                )
+            )
+
+        handler = _get_webrtc_handler(transport)
+        answer = await handler.handle_web_request(webrtc_request, _on_connection)
+        return answer
 
     @router.get("/api/voice/calls/{call_id}")
     def get_call(call_id: str):
