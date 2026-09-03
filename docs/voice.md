@@ -40,23 +40,63 @@ Try it: `POST /api/voice/start` with a `scenario_id` from
 `test_voice_telephony.py` (30 tests, all against a scripted fake LLM client
 — no real OpenRouter calls in CI, same pattern as `test_agent_gate_loop.py`).
 
-## Phase 2 — real speech, browser call (not started)
+## Phase 2 — real speech, browser call (done)
 
-Sarvam STT/TTS wired through Pipecat's `SmallWebRTCTransport` + Silero VAD.
-Needs:
+Real Sarvam STT/TTS over a Pipecat pipeline (VAD → STT → the exact same
+`app/voice/session.say()` phase 1 uses → TTS), connected to the browser
+over plain WebRTC.
 
-- `pip install -e ".[voice]"` — a separate optional-dependency group
-  (`pipecat-ai[webrtc,websocket,silero,sarvam]`, `plivo`), kept out of the
-  base install because it pulls in `aiortc` and a torch-based VAD model, a
-  heavy native dependency chain with known Windows install friction. The
-  rest of the app (webhook/chat/dashboard/voice-phase-1) works with zero
-  installs from this group; `app/voice/transport.py`'s `available()`
-  reports exactly why it isn't ready if the extra is missing.
-- `SARVAM_API_KEY` in `.env` — sign up at dashboard.sarvam.ai.
+**Install risk, resolved.** `pip install -e ".[voice]"`
+(`pipecat-ai[webrtc,websocket,silero,sarvam]`, `plivo`) installs cleanly on
+Windows with **prebuilt wheels for everything** — no torch, no FFmpeg, no
+compiler toolchain needed (`av`, `aiortc`, `onnxruntime` all ship as
+`win_amd64` wheels on pipecat-ai 1.8.1). Kept as a separate optional group
+from the base install anyway, so the webhook/chat/dashboard/voice-phase-1
+app works with zero installs from this group; `app/voice/transport.py`'s
+`available()` reports exactly why it isn't ready if the extra or
+`SARVAM_API_KEY` is missing.
 
-The browser side needs no client library: `frontend/client/src/audio.ts` in
-lazarusV2 is ~50 lines of plain `RTCPeerConnection`/`getUserMedia`, portable
-directly into `static/voice/index.html`.
+**Two real bugs found only by actually placing a call** (neither is
+catchable without a live Sarvam key):
+
+1. `SarvamSTTService` in pipecat-ai 1.8.1 only accepts `saaras:v3`/`v4` —
+   the `saarika:v2` model name (valid on some other Sarvam SDK versions)
+   raises `ValueError` at construction time. Fixed: `sarvam_stt_model`
+   defaults to `saaras:v3` (`app/config.py`).
+2. Sarvam's `bulbul:v2` TTS model is deprecated **server-side** as of this
+   writing (`400: Model 'bulbul:v2' has been deprecated. Please use
+   'bulbul:v3' instead`) — pipecat's own default still points at v2. Fixed:
+   `sarvam_tts_model` defaults to `bulbul:v3`.
+
+**Verified end to end**, not just "compiles": the Claude Code Browser pane
+blocks `getUserMedia` (confirmed via a real permission-denial error, which
+`static/voice/index.html` now surfaces cleanly instead of failing
+silently — a real bug caught and fixed along the way), so real audio was
+verified with `scripts/verify_voice_call.py` instead — a scripted `aiortc`
+client that does the same SDP offer/answer exchange a browser would, then
+checks the *actual sample values* of the audio that comes back (not just
+"frames arrived", which would also pass on pure silence padding). Confirmed:
+Sarvam STT and TTS both authenticate and connect with the real key, the
+WebRTC handshake completes, and real synthesized speech (max sample
+amplitude ~10,000–14,000, `>200` threshold for "not silence") flows back
+for the call's opening line. **Not yet verified**: live transcription
+accuracy against real human speech — the scripted client sends silence (so
+Sarvam STT has nothing to transcribe), and this needs a human tester with
+a real microphone against `/voice` in an ordinary browser (not the Claude
+Code Browser pane).
+
+Try it: place a call the same way as phase 1 (`POST /api/voice/start`),
+then either type into `/voice`'s composer (phase 1's path, unchanged) or
+click "Connect real audio (mic)" to attach a live WebRTC call via
+`POST /api/voice/{call_id}/offer` — both drive the exact same
+`app/voice/session.say()`. Run `python scripts/verify_voice_call.py
+<call_id>` against a running server to re-verify the pipeline without a
+browser.
+
+The browser side needs no client library: lazarusV2's
+`frontend/client/src/audio.ts` is ~50 lines of plain
+`RTCPeerConnection`/`getUserMedia`, ported directly into
+`static/voice/index.html`'s `connectAudio()`.
 
 ## Phase 3 — ring a real phone (not started)
 
@@ -64,7 +104,10 @@ Plivo REST dial + signature-verified webhooks + Audio Streaming WebSocket
 (`app/voice/telephony.py` already has the signature-verification and
 PlivoXML-building logic, tested against a fake Plivo client in
 `tests/test_voice_telephony.py` — only the actual pipeline wiring in
-`app/voice/transport.py` is missing). Needs, in addition to phase 2's:
+`app/voice/transport.py` is missing, though `_assemble()` is already
+written to be transport-agnostic so phase 3 should mostly be plumbing a
+Plivo `FastAPIWebsocketTransport` through it instead of
+`SmallWebRTCTransport`). Needs, in addition to phase 2's:
 
 - `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN` — console.plivo.com → Account.
 - `PLIVO_FROM_NUMBER` — buy one from console.plivo.com → Phone Numbers.

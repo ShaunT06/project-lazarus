@@ -96,15 +96,19 @@
   <div id="callArea">
     <div id="meta"></div>
     <div id="transcript"></div>
+    <div id="audioBar" style="display:none;padding:10px 12px;border-top:1px solid var(--border);background:var(--panel);text-align:center">
+      <button id="audioBtn" style="background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer">Connect real audio (mic)</button>
+    </div>
     <div id="composer">
       <input id="input" type="text" placeholder="What the customer says..." autocomplete="off" />
       <button id="sendBtn">Send</button>
     </div>
     <div class="hint" style="padding:0 12px 10px;font-size:11px;color:var(--text-dim)">
-      Phase 1: text-simulated call. Real speech (Sarvam STT/TTS) lands in phase 2.
+      Type the customer's side, or connect a real microphone if Sarvam is configured.
     </div>
   </div>
 </div>
+<audio id="agentAudio" autoplay></audio>
 
 <script>
 const picker = document.getElementById('picker');
@@ -115,13 +119,21 @@ const transcript = document.getElementById('transcript');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('sendBtn');
 const statusBanner = document.getElementById('statusBanner');
+const audioBar = document.getElementById('audioBar');
+const audioBtn = document.getElementById('audioBtn');
+const agentAudio = document.getElementById('agentAudio');
+const composer = document.getElementById('composer');
 
 let callId = null;
+let audioAvailable = false;
+let audioCall = null;
+let pollTimer = null;
 
 async function loadStatus() {
   const res = await fetch('/api/voice/status');
   const status = await res.json();
-  if (!status.browser_call.available) {
+  audioAvailable = status.browser_call.available;
+  if (!audioAvailable) {
     statusBanner.style.display = 'block';
     statusBanner.textContent = 'Real audio not available yet (' + status.browser_call.reason + ') - running as a text-simulated call.';
   }
@@ -178,9 +190,48 @@ function renderMeta(state) {
   meta.innerHTML = html;
 }
 
+let renderedTurns = 0;
+
 function renderTranscript(state) {
   transcript.innerHTML = '';
-  for (const t of state.transcript) addMsg(t.role, t.text);
+  renderedTurns = 0;
+  appendNewTurns(state);
+}
+
+function appendNewTurns(state) {
+  for (; renderedTurns < state.transcript.length; renderedTurns++) {
+    const t = state.transcript[renderedTurns];
+    if (t.role === 'agent' && t.meta && t.meta.verifier) addBlocked(t.meta.verifier);
+    addMsg(t.role, t.text);
+  }
+}
+
+function handleEndedState(state) {
+  if (!state.ended) return;
+  callArea.classList.remove('active');
+  audioBar.style.display = 'none';
+  stopPolling();
+  let note = `Call ended - outcome: ${state.outcome}.`;
+  if (state.reconciliation && state.reconciliation.matches === false) {
+    note += ' Reconciliation flagged a mismatch: ' + state.reconciliation.explanation;
+  }
+  addNote(note, 'ended');
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(async () => {
+    const res = await fetch(`/api/voice/calls/${callId}`);
+    if (!res.ok) return;
+    const state = await res.json();
+    renderMeta(state);
+    appendNewTurns(state);
+    handleEndedState(state);
+  }, 1200);
 }
 
 async function startCall(scenarioId) {
@@ -204,7 +255,64 @@ async function startCall(scenarioId) {
   callArea.classList.add('active');
   renderMeta(state);
   renderTranscript(state);
+  if (audioAvailable) {
+    audioBar.style.display = 'block';
+    audioBtn.disabled = false;
+    audioBtn.textContent = 'Connect real audio (mic)';
+  }
   input.focus();
+}
+
+async function connectAudio() {
+  audioBtn.disabled = true;
+  audioBtn.textContent = 'Connecting...';
+  try {
+    const mic = await navigator.mediaDevices.getUserMedia({
+      audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
+    });
+    const pc = new RTCPeerConnection({iceServers: [{urls: 'stun:stun.l.google.com:19302'}]});
+    mic.getTracks().forEach((t) => pc.addTrack(t, mic));
+    pc.addTransceiver('audio', {direction: 'recvonly'});
+    pc.ontrack = (e) => { agentAudio.srcObject = e.streams[0]; agentAudio.play().catch(() => {}); };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') return resolve();
+      const done = () => {
+        if (pc.iceGatheringState === 'complete') {
+          pc.removeEventListener('icegatheringstatechange', done);
+          resolve();
+        }
+      };
+      pc.addEventListener('icegatheringstatechange', done);
+      setTimeout(resolve, 2500);
+    });
+
+    const local = pc.localDescription;
+    const res = await fetch(`/api/voice/${callId}/offer`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sdp: local.sdp, type: local.type}),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      addNote('Audio connect failed: ' + (err.detail || res.statusText), 'refused');
+      audioBtn.disabled = false;
+      audioBtn.textContent = 'Connect real audio (mic)';
+      return;
+    }
+    const answer = await res.json();
+    await pc.setRemoteDescription({sdp: answer.sdp, type: answer.type});
+
+    audioCall = {pc, mic};
+    audioBtn.textContent = 'Audio connected - speak now';
+    composer.style.display = 'none';
+    startPolling();
+  } catch (err) {
+    addNote('Could not access the microphone: ' + err.message, 'refused');
+    audioBtn.disabled = false;
+    audioBtn.textContent = 'Connect real audio (mic)';
+  }
 }
 
 async function sendTurn() {
@@ -213,6 +321,7 @@ async function sendTurn() {
   input.value = '';
   sendBtn.disabled = true;
   addMsg('customer', said);
+  renderedTurns++;
   try {
     const res = await fetch(`/api/voice/${callId}/turn`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -224,19 +333,8 @@ async function sendTurn() {
       return;
     }
     renderMeta(state);
-    const last = state.transcript[state.transcript.length - 1];
-    if (last && last.role === 'agent') {
-      if (last.meta && last.meta.verifier) addBlocked(last.meta.verifier);
-      addMsg('agent', last.text);
-    }
-    if (state.ended) {
-      callArea.classList.remove('active');
-      let note = `Call ended - outcome: ${state.outcome}.`;
-      if (state.reconciliation && state.reconciliation.matches === false) {
-        note += ' Reconciliation flagged a mismatch: ' + state.reconciliation.explanation;
-      }
-      addNote(note, 'ended');
-    }
+    appendNewTurns(state);
+    handleEndedState(state);
   } finally {
     sendBtn.disabled = false;
     input.focus();
@@ -244,6 +342,7 @@ async function sendTurn() {
 }
 
 sendBtn.onclick = sendTurn;
+audioBtn.onclick = connectAudio;
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTurn(); });
 
 loadStatus();
