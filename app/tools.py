@@ -105,6 +105,70 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
 ]
 
+# The voice channel's closed in-call tool set (app/voice/session.py). Kept
+# separate from TOOL_SCHEMAS deliberately - these three are reachable mid-call,
+# never from the text agent loop, and none of them can settle a debt or send
+# customer-facing text on their own. "record_commitment" only records terms;
+# app/voice/session.py is what turns an agreed commitment into an actual
+# confirmation message via the ordinary send_message tool above - "voice
+# negotiates, text commits".
+IN_CALL_TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "record_commitment",
+            "description": (
+                "Record what the customer just agreed to on this call. Does not send "
+                "anything by itself - a confirmation message is sent separately."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lever": {
+                        "type": "string",
+                        "enum": ["discount", "split", "retry"],
+                    },
+                    "terms": {"type": "object"},
+                },
+                "required": ["lever", "terms"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "escalate_to_human",
+            "description": "Hand this case to a human agent - the call cannot resolve it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string"},
+                },
+                "required": ["reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "suppress_contact",
+            "description": "Stop all future outreach to this customer for this case.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string"},
+                },
+                "required": ["reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+IN_CALL_TOOL_NAMES = {s["function"]["name"] for s in IN_CALL_TOOL_SCHEMAS}
+
 
 def execute(
     name: str, arguments: dict[str, Any], *, notify_channel: str = "console"
@@ -129,4 +193,14 @@ def execute(
         return {"status": "scheduled", "delay_hours": arguments.get("delay_hours")}
     if name == "update_customer_record":
         return {"status": "recorded"}
+    if name == "record_commitment":
+        return {
+            "status": "recorded",
+            "lever": arguments.get("lever"),
+            "terms": arguments.get("terms", {}),
+        }
+    if name == "escalate_to_human":
+        return {"status": "escalated", "reason": arguments.get("reason")}
+    if name == "suppress_contact":
+        return {"status": "suppressed", "reason": arguments.get("reason")}
     raise ValueError(f"unknown tool: {name}")

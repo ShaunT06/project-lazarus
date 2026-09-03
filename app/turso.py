@@ -101,6 +101,21 @@ _SCHEMA_STATEMENTS = [
         updated_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS voice_calls (
+        call_id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        state TEXT NOT NULL,
+        outcome TEXT,
+        ended INTEGER NOT NULL DEFAULT 0,
+        committed INTEGER NOT NULL DEFAULT 0,
+        transcript TEXT NOT NULL DEFAULT '[]',
+        reconciliation TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_voice_calls_case ON voice_calls(case_id)",
 ]
 
 _initialized = False

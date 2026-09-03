@@ -36,5 +36,32 @@ class Settings(BaseSettings):
     database_url: str = ""
     turso_auth_token: str = ""
 
+    # --- Voice channel (see docs/voice.md) ---
+    # Phase 1 (gate/dialogue/verify/session/reconcile, text-simulated turns)
+    # needs none of these - it runs on openrouter_api_key above. Phase 2
+    # (real Sarvam STT/TTS over a browser WebRTC call) needs sarvam_api_key.
+    # Phase 3 (ringing a real phone via Plivo) needs the plivo_* vars plus
+    # public_base_url. All blank by default so the base app (webhook/chat/
+    # dashboard) is completely unaffected until someone opts in.
+    dialogue_policy_path: Path = Path("config/dialogue/default.json")
+    voice_quiet_hours_start: int = 9  # local hour, inclusive
+    voice_quiet_hours_end: int = 21  # local hour, exclusive
+    voice_max_contacts_per_case: int = 4
+
+    sarvam_api_key: str = ""
+    sarvam_base_url: str = "https://api.sarvam.ai"
+    sarvam_stt_model: str = "saarika:v2"
+    sarvam_tts_model: str = "bulbul:v2"
+    sarvam_tts_voice: str = ""
+
+    plivo_auth_id: str = ""
+    plivo_auth_token: str = ""
+    plivo_from_number: str = ""
+    public_base_url: str = ""
+    # Dev-only escape hatch for when a corporate/tunnel proxy strips Plivo's
+    # signature headers before they reach this process - off by default,
+    # never set true in a real deployment. Mirrors lazarusV2's same knob.
+    plivo_skip_signature_check: bool = False
+
 
 settings = Settings()

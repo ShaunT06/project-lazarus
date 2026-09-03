@@ -59,3 +59,13 @@ def get_strategy_config_store(seed_path: Path, database_url: str):
     from app.strategy_store import StrategyConfigStore
 
     return StrategyConfigStore(seed_path)
+
+
+def get_voice_call_store(db_path: Path, database_url: str):
+    if database_url:
+        from app.voice_store import TursoVoiceCallStore
+
+        return TursoVoiceCallStore()
+    from app.voice_store import VoiceCallStore
+
+    return VoiceCallStore(db_path)

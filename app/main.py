@@ -14,9 +14,11 @@ from app.stores import (
     get_conversation_store,
     get_customer_store,
     get_strategy_config_store,
+    get_voice_call_store,
     get_webhook_store,
 )
 from app.strategy import StrategyEngine
+from app.voice_routes import build_voice_router
 from app.webhook import build_webhook_router
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -29,6 +31,7 @@ def create_app(
     audit_path: Path | None = None,
     customer_db_path: Path | None = None,
     conversation_db_path: Path | None = None,
+    voice_call_db_path: Path | None = None,
     strategy_config_path: Path | None = None,
     openrouter_client_factory: Callable[[], Any] | None = None,
     max_gate_corrections: int | None = None,
@@ -57,6 +60,9 @@ def create_app(
     )
     conversation_store = get_conversation_store(
         conversation_db_path or Path("data/conversations.db"), effective_database_url
+    )
+    voice_call_store = get_voice_call_store(
+        voice_call_db_path or Path("data/voice_calls.db"), effective_database_url
     )
     strategy_store = get_strategy_config_store(strategy_path, effective_database_url)
     strategy_engine = StrategyEngine.from_file(strategy_path)
@@ -97,6 +103,15 @@ def create_app(
             strategy_store=strategy_store,
         )
     )
+    app.include_router(
+        build_voice_router(
+            voice_call_store=voice_call_store,
+            customer_store=customer_store,
+            audit=audit,
+            strategy_store=strategy_store,
+            openrouter_client_factory=client_factory,
+        )
+    )
 
     @app.get("/healthz")
     def healthz():
@@ -110,6 +125,10 @@ def create_app(
     def chat_page():
         return FileResponse(_STATIC_DIR / "chat" / "index.html")
 
+    @app.get("/voice")
+    def voice_page():
+        return FileResponse(_STATIC_DIR / "voice" / "index.html")
+
     @app.get("/", response_class=HTMLResponse)
     def index():
         return (
@@ -120,6 +139,7 @@ def create_app(
             "<h1>Project Lazarus</h1>"
             "<p>AI-powered revenue recovery agent.</p>"
             "<a href='/chat'>Customer chat (Lazarus talking to a customer)</a>"
+            "<a href='/voice'>Voice call (Lazarus calling a customer)</a>"
             "<a href='/dashboard'>Merchant dashboard (audit &amp; metrics)</a>"
             "</body></html>"
         )
