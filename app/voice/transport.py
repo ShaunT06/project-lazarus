@@ -1,10 +1,13 @@
-"""Audio transport: Pipecat over WebRTC (browser), phase 2. Real phone
-(Plivo, phase 3) will reuse the same `_assemble()` shape with a different
-transport once wired.
+"""Audio transport: Pipecat over WebRTC (browser, phase 2) or Plivo's Audio
+Streaming WebSocket (a real phone, phase 3) - both build the identical
+pipeline via `_assemble()`, just swapping the transport. Plivo is a
+carrier only (see app/voice/telephony.py's module docstring): it rings a
+real phone and moves audio over a websocket exactly where
+`SmallWebRTCTransport` moves audio over WebRTC for the browser call.
 
 The pipeline is deliberately thin:
 
-    browser mic -> WebRTC -> VAD -> Sarvam STT -> [ session.say() ] -> Sarvam TTS -> WebRTC
+    mic/phone audio -> VAD -> Sarvam STT -> [ session.say() ] -> Sarvam TTS -> audio out
 
 There is no LLM node in that list on purpose (ADR-001 in lazarusV2, the
 design this mirrors): the model is buried inside app/voice/dialogue.py,
@@ -60,6 +63,8 @@ def _imports() -> dict[str, Any]:
             FrameDirection,
             FrameProcessor,
         )
+        from pipecat.runner.utils import parse_telephony_websocket  # noqa: F401
+        from pipecat.serializers.plivo import PlivoFrameSerializer  # noqa: F401
         from pipecat.services.sarvam.stt import SarvamSTTService, SarvamSTTSettings  # noqa: F401
         from pipecat.services.sarvam.tts import SarvamTTSService, SarvamTTSSettings  # noqa: F401
         from pipecat.transcriptions.language import Language  # noqa: F401
@@ -70,6 +75,10 @@ def _imports() -> dict[str, Any]:
             SmallWebRTCRequestHandler,
         )
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport  # noqa: F401
+        from pipecat.transports.websocket.fastapi import (  # noqa: F401
+            FastAPIWebsocketParams,
+            FastAPIWebsocketTransport,
+        )
     except ImportError as exc:  # pragma: no cover - env dependent
         raise RuntimeError(PIPECAT_HINT) from exc
     return dict(locals())
@@ -250,6 +259,58 @@ async def run_browser_call(
     transport = P["SmallWebRTCTransport"](
         webrtc_connection=webrtc_connection,
         params=P["TransportParams"](audio_in_enabled=True, audio_out_enabled=True),
+    )
+    task, runner = _assemble(
+        P, transport, call_session, audit, opening_text, notify_channel=notify_channel
+    )
+    await runner.run(task)
+
+
+async def run_plivo_call(
+    websocket: Any,
+    call_session: CallSession,
+    audit: AuditLogger,
+    opening_text: str,
+    *,
+    stream_id: str,
+    plivo_call_id: str,
+    notify_channel: str = "console",
+) -> None:
+    """Build and run the pipeline for one real phone call over Plivo's
+    Audio Streaming websocket. `stream_id`/`plivo_call_id` come from
+    Plivo's own `start` event, drained by
+    `pipecat.runner.utils.parse_telephony_websocket` before this runs -
+    `PlivoFrameSerializer` needs both at construction time (the latter
+    only for auto hang-up via Plivo's REST API when the call ends).
+
+    Same fire-and-forget contract as run_browser_call: the caller
+    (app/voice_routes.py's websocket route) awaits this directly since a
+    websocket route has nothing useful to return once the pipeline ends -
+    unlike the browser's HTTP offer/answer exchange, there's no separate
+    response to send back first.
+    """
+    P = _imports()
+    serializer = P["PlivoFrameSerializer"](
+        stream_id=stream_id,
+        call_id=plivo_call_id,
+        auth_id=settings.plivo_auth_id,
+        auth_token=settings.plivo_auth_token,
+    )
+    transport = P["FastAPIWebsocketTransport"](
+        websocket=websocket,
+        params=P["FastAPIWebsocketParams"](
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            add_wav_header=False,
+            serializer=serializer,
+            # Plivo's Audio Streaming connection carries no browser Origin
+            # header at all - the allowlist exists for the WebRTC
+            # signalling path, not this one. pipecat's own default
+            # (PIPECAT_ALLOWED_ORIGINS, empty = allow all) already permits
+            # this, but explicit is safer than depending on that env var
+            # never being set restrictively in a real deployment.
+            allowed_origins=[],
+        ),
     )
     task, runner = _assemble(
         P, transport, call_session, audit, opening_text, notify_channel=notify_channel
