@@ -98,21 +98,55 @@ The browser side needs no client library: lazarusV2's
 `RTCPeerConnection`/`getUserMedia`, ported directly into
 `static/voice/index.html`'s `connectAudio()`.
 
-## Phase 3 — ring a real phone (not started)
+## Phase 3 — ring a real phone (code done, live dial not yet verified)
 
-Plivo REST dial + signature-verified webhooks + Audio Streaming WebSocket
-(`app/voice/telephony.py` already has the signature-verification and
-PlivoXML-building logic, tested against a fake Plivo client in
-`tests/test_voice_telephony.py` — only the actual pipeline wiring in
-`app/voice/transport.py` is missing, though `_assemble()` is already
-written to be transport-agnostic so phase 3 should mostly be plumbing a
-Plivo `FastAPIWebsocketTransport` through it instead of
-`SmallWebRTCTransport`). Needs, in addition to phase 2's:
+Plivo REST dial + signature-verified webhooks + Audio Streaming WebSocket,
+reusing the exact same `_assemble()` pipeline phase 2 built — only the
+transport changes (`FastAPIWebsocketTransport` + `PlivoFrameSerializer`
+instead of `SmallWebRTCTransport`).
+
+| Piece | File | What it does |
+|---|---|---|
+| Outbound dial | `app/voice/telephony.py:dial()` | `plivo.RestClient(...).calls.create(...)` — rings a real number, points Plivo at `answer_url`/`hangup_url` |
+| Answer webhook | `POST /voice/plivo/answer/{call_id}` | Signature-verified, returns PlivoXML (`telephony.answer_xml()`) pointing Plivo's Audio Streaming at the stream websocket |
+| Hangup webhook | `POST /voice/plivo/hangup/{call_id}` | Signature-verified; ends the session as `no_answer` if Plivo never actually connected the call |
+| Audio Streaming | `WS /voice/plivo/stream/{call_id}` | Drains Plivo's `start` event via pipecat's own `parse_telephony_websocket()` for `stream_id`/`call_id`, then hands off to `transport.run_plivo_call()` |
+| Outbound trigger | `POST /api/voice/{call_id}/dial-phone` | `{"to_number": "+91..."}` — the call must already exist (`POST /api/voice/start` first, same precondition as phase 2's `/offer`) |
+
+**Verified without live credentials**, the same way phase 2's signature
+work was: `tests/test_voice_telephony.py::test_validate_signature_against_the_real_plivo_sdk`
+computes a genuinely valid V3 signature using the real installed `plivo`
+package's own signing function (not a mock), then confirms
+`telephony.validate_signature()` accepts it, rejects a forged one, and
+rejects a tampered form parameter — Plivo signs the POST body too
+(`construct_post_url`), not just the URL and nonce, so a naive
+implementation that ignored `params` would have passed a weaker version of
+this test and still been wrong. Also cross-checked every function
+signature in `telephony.py` (`RestClient.calls.create`,
+`plivoxml.StreamElement`, `utils.validate_v3_signature`) against the
+actually-installed `plivo` 4.62.0 SDK via introspection — all matched
+what was written before the package was installed.
+
+One correctness fix pulled from re-reading lazarusV2's reference
+implementation: `FastAPIWebsocketParams` needs `allowed_origins=[]`
+explicitly for the Plivo transport, because Plivo's Audio Streaming
+connection carries no browser `Origin` header at all — pipecat's own
+default here happens to already be permissive (driven by an unset
+`PIPECAT_ALLOWED_ORIGINS` env var), but leaving it implicit means a future
+deployment that sets that env var for the legitimate WebRTC path would
+silently break Plivo calls too. Now explicit in `app/voice/transport.py`.
+
+**Not yet verified**: an actual phone ringing. That needs, none of which
+this environment has:
 
 - `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN` — console.plivo.com → Account.
 - `PLIVO_FROM_NUMBER` — buy one from console.plivo.com → Phone Numbers.
 - `PUBLIC_BASE_URL` — a public HTTPS URL Plivo can reach. Locally that's a
   tunnel (`ngrok http 8000`); there is no Vercel option here (see below).
+
+Once those are set: `POST /api/voice/start` → `POST /api/voice/{call_id}/dial-phone`
+with a real `to_number` should ring it, and the same gate/dialogue/verify/
+reconcile chain every other channel goes through applies over the PSTN leg.
 
 ## Why this doesn't run on Vercel
 

@@ -16,7 +16,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request, WebSocket
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.audit import AuditLogger
@@ -39,6 +40,10 @@ class StartCallRequest(BaseModel):
 
 class TurnRequest(BaseModel):
     said: str
+
+
+class DialPhoneRequest(BaseModel):
+    to_number: str
 
 
 # Lazily built the first time a real audio call is actually offered, so
@@ -197,6 +202,96 @@ def build_voice_router(
         handler = _get_webrtc_handler(transport)
         answer = await handler.handle_web_request(webrtc_request, _on_connection)
         return answer
+
+    @router.post("/api/voice/{call_id}/dial-phone")
+    def dial_phone(call_id: str, req: DialPhoneRequest):
+        """Ring a real phone for an already-placed call - phase 3. Same
+        precondition as /offer: POST /api/voice/start must have run first,
+        so the gate has already passed and there's an opening line ready
+        to speak once Plivo's Audio Streaming websocket connects."""
+        ok, reason = telephony.available()
+        if not ok:
+            raise HTTPException(status_code=503, detail=reason)
+
+        call_session = voice_session.get_session(call_id)
+        if call_session is None:
+            raise HTTPException(status_code=404, detail="unknown call_id, or the call has ended")
+
+        plivo_call_uuid = telephony.dial(call_id, req.to_number)
+        audit.log(
+            call_session.case_id,
+            "call.dial_phone",
+            {"call_id": call_id, "to_number": req.to_number, "plivo_call_uuid": plivo_call_uuid},
+        )
+        return {"plivo_call_uuid": plivo_call_uuid}
+
+    def _verify_plivo_request(path: str, form: dict, headers) -> None:
+        """Shared signature check for both Plivo webhook routes. Every one
+        of them is unauthenticated by transport (Plivo just POSTs to a
+        public URL), so this is the actual gate - raises 403 rather than
+        trusting anything in the request first."""
+        url = telephony.http_url(path)
+        signature = headers.get("X-Plivo-Signature-V3")
+        nonce = headers.get("X-Plivo-Signature-V3-Nonce")
+        if not telephony.validate_signature(url, "POST", form, signature, nonce):
+            raise HTTPException(status_code=403, detail="invalid or missing Plivo signature")
+
+    @router.post("/voice/plivo/answer/{call_id}")
+    async def plivo_answer(call_id: str, request: Request):
+        ok, reason = telephony.available()
+        if not ok:
+            raise HTTPException(status_code=503, detail=reason)
+        form = dict(await request.form())
+        _verify_plivo_request(f"/voice/plivo/answer/{call_id}", form, request.headers)
+
+        call_session = voice_session.get_session(call_id)
+        if call_session is None:
+            raise HTTPException(status_code=404, detail="unknown call_id, or the call has ended")
+
+        return Response(content=telephony.answer_xml(call_id), media_type="text/xml")
+
+    @router.post("/voice/plivo/hangup/{call_id}")
+    async def plivo_hangup(call_id: str, request: Request):
+        ok, reason = telephony.available()
+        if not ok:
+            raise HTTPException(status_code=503, detail=reason)
+        form = dict(await request.form())
+        _verify_plivo_request(f"/voice/plivo/hangup/{call_id}", form, request.headers)
+
+        call_session = voice_session.get_session(call_id)
+        if call_session is not None and not call_session.ended:
+            # Plivo never connected the call (no answer, busy, failed) - end
+            # it cleanly so the case doesn't wedge in "negotiating" forever.
+            voice_session.end(call_session, audit, "no_answer")
+            _save(call_session)
+        return {"status": "ok"}
+
+    @router.websocket("/voice/plivo/stream/{call_id}")
+    async def plivo_stream(websocket: WebSocket, call_id: str):
+        """Plivo's actual Audio Streaming connection. Drains the `start`
+        event for stream_id/call_id (needed by PlivoFrameSerializer) before
+        handing the socket to the same pipeline app/voice/transport.py
+        builds for a browser call."""
+        await websocket.accept()
+        ok, _reason = transport.available()
+        call_session = voice_session.get_session(call_id)
+        if not ok or call_session is None or not call_session.transcript:
+            await websocket.close()
+            return
+
+        P = transport._imports()
+        _transport_type, call_data = await P["parse_telephony_websocket"](websocket)
+        opening_text = call_session.transcript[0]["text"]
+        await transport.run_plivo_call(
+            websocket,
+            call_session,
+            audit,
+            opening_text,
+            stream_id=call_data.stream_id,
+            plivo_call_id=call_data.call_id,
+            notify_channel=settings.notify_channel,
+        )
+        _save(call_session)
 
     @router.get("/api/voice/calls/{call_id}")
     def get_call(call_id: str):
