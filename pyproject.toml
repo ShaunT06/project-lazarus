@@ -14,6 +14,16 @@ dependencies = [
 
 [project.optional-dependencies]
 redis = ["redis>=5.2"]
+# Phase 2/3 of the voice channel (docs/voice.md) - real Sarvam STT/TTS over
+# a Pipecat pipeline, plus the Plivo SDK for ringing a real phone. Kept
+# separate from the base dependencies deliberately: pipecat-ai's webrtc/
+# silero extras pull in aiortc and a torch-based VAD model, a heavy native
+# dependency chain that has known install friction on Windows. The webhook/
+# chat/dashboard/voice-phase-1 app works with zero installs from this group.
+voice = [
+    "pipecat-ai[webrtc,websocket,silero,sarvam]",
+    "plivo",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
