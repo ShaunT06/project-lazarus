@@ -51,6 +51,14 @@ class CallSession:
     committed: bool = False
     transcript: list[dict[str, Any]] = field(default_factory=list)
     reconciliation: dict[str, Any] | None = None
+    # True while a turn (an LLM round trip) is actively being generated -
+    # checked by app/voice/transport.py's idle-timeout handler so a slow
+    # reply can never race with the idle timer closing the call out from
+    # under it. The idle timer only measures time since the last VAD/
+    # speech event; it has no idea a reply is in flight, so without this
+    # flag a customer who was heard fine just gets silently cut off if the
+    # LLM call happens to run long.
+    in_flight: bool = False
 
     def public(self) -> dict[str, Any]:
         d = self.dialogue
