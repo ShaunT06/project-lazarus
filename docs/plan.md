@@ -1,7 +1,13 @@
-# Project Lazarus
+# Project Lazarus — original design doc
+
 ### AI-Powered Revenue Recovery Agent — Razorpay Buildathon, Track 03
 
 *"Lazarus" — because the whole point of this agent is bringing transactions back from the dead.*
+
+> **Historical.** This is the design written at project kickoff. Some of it changed during
+> the build — Redis/WhatsApp were replaced by SQLite-or-Turso and the `/chat` + `/voice` web
+> UIs, and the model routed to differs from what's named below. See the root
+> [`README.md`](../README.md) for what was actually built and its current status.
 
 ---
 
