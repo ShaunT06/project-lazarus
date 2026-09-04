@@ -44,6 +44,14 @@ def make_response(speak_text, tool_name=None, tool_args=None):
     )
 
 
+def make_empty_response() -> LLMResponse:
+    """The model replies with neither a tool call nor plain-text content -
+    the real failure mode caught on a live call: Sarvam transcribed the
+    customer fine, but the model didn't call 'speak', so the turn produced
+    no text at all."""
+    return LLMResponse(content=None, tool_calls=[], raw_message={"role": "assistant"})
+
+
 def make_policy() -> DialoguePolicy:
     return DialoguePolicy(
         {
@@ -162,3 +170,26 @@ def test_silence_nudges_then_closes():
     d.silence()
     assert d.state == "closed"
     assert d.outcome == "silence"
+
+
+def test_no_tool_call_and_no_content_is_nudged_once_then_recovers():
+    """Regression test for a real bug found on a live call: the model
+    replied with neither a 'speak' tool call nor plain-text content after
+    consent was given, and the call went completely silent instead of
+    asking anything - the worst possible failure mode on a phone call."""
+    d = Dialogue(make_policy(), make_strategy(), make_case(), NOW)
+    d.open()
+    client = ScriptedClient([make_empty_response(), make_response("Sure, happy to help.")])
+    turn = d.respond("Yes, that's fine.", client)
+    assert turn.text == "Sure, happy to help."
+    assert turn.meta["nudged"] is True
+    assert len(client.calls) == 2  # the original call plus exactly one nudge
+
+
+def test_still_silent_after_nudge_falls_back_to_a_generic_line():
+    d = Dialogue(make_policy(), make_strategy(), make_case(), NOW)
+    d.open()
+    client = ScriptedClient([make_empty_response(), make_empty_response()])
+    turn = d.respond("Yes, that's fine.", client)
+    assert turn.text  # never empty, whatever the model does
+    assert turn.meta["nudged"] is True
