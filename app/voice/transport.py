@@ -37,8 +37,12 @@ PIPECAT_HINT = "pipecat is not installed - pip install -e '.[voice]'"
 
 # How long a call waits in silence before a nudge, and how many nudges
 # before hanging up - mirrors dialogue.py's _MAX_SILENCES for the
-# text-simulated path, just driven by a real idle timer here.
-_IDLE_TIMEOUT_SECS = 10.0
+# text-simulated path, just driven by a real idle timer here. 20s rather
+# than a tighter value: a real OpenRouter round trip has been observed
+# taking ~9s on its own, and the CallSession.in_flight guard on the idle
+# handler above already covers a reply that's actively being generated -
+# this constant is purely for genuine dead air.
+_IDLE_TIMEOUT_SECS = 20.0
 
 
 def _imports() -> dict[str, Any]:
@@ -157,6 +161,7 @@ def _build_bridge(P: dict[str, Any]):
             from app.voice import session as voice_session
 
             client = OpenRouterClient()
+            self._call.in_flight = True
             try:
                 turn = await asyncio.to_thread(
                     voice_session.say,
@@ -183,6 +188,7 @@ def _build_bridge(P: dict[str, Any]):
                 return
             finally:
                 client.close()
+                self._call.in_flight = False
 
             if turn.text:
                 self._agent_speaking = True
@@ -233,6 +239,15 @@ def _assemble(
         from app.voice import session as voice_session
 
         if call_session.ended:
+            return
+        if call_session.in_flight:
+            # A reply is actively being generated (e.g. a slow LLM round
+            # trip) - the idle timer only tracks VAD/speech activity and
+            # has no idea a turn is in progress, so without this check a
+            # customer who was heard fine gets silently cut off the moment
+            # their reply happens to take a bit longer than usual. Skip
+            # this tick entirely; cancel_on_idle_timeout=False means the
+            # timer keeps running and will check again.
             return
         turn = await asyncio.to_thread(voice_session.silence, call_session, audit)
         if turn.text:
