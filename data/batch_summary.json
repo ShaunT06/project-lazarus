@@ -3,55 +3,54 @@
   "total_cases": 50,
   "resolved": 50,
   "outcome_counts": {
-    "actioned": 41,
-    "no_action": 7,
+    "no_action": 10,
+    "actioned": 38,
     "hard_stop": 2
   },
   "by_category": {
-    "subscription_failure": {
-      "actioned": 16,
-      "no_action": 3,
+    "checkout_abandonment": {
+      "no_action": 5,
+      "actioned": 9,
       "hard_stop": 1
     },
-    "checkout_abandonment": {
-      "actioned": 11,
-      "hard_stop": 1,
-      "no_action": 3
-    },
     "receivable": {
+      "actioned": 15
+    },
+    "subscription_failure": {
+      "no_action": 5,
       "actioned": 14,
-      "no_action": 1
+      "hard_stop": 1
     }
   },
   "at_risk_inr_total": 1690472.0,
-  "at_risk_inr_actioned": 1460677.0,
+  "at_risk_inr_actioned": 1661730.0,
   "by_category_at_risk_inr": {
-    "subscription_failure": {
-      "total": 33131.0,
-      "actioned": 22384.0
-    },
     "checkout_abandonment": {
       "total": 34841.0,
-      "actioned": 25793.0
+      "actioned": 19193.0
     },
     "receivable": {
       "total": 1622500.0,
-      "actioned": 1412500.0
+      "actioned": 1622500.0
+    },
+    "subscription_failure": {
+      "total": 33131.0,
+      "actioned": 20037.0
     }
   },
-  "recovery_attempt_rate_pct": 82.0,
+  "recovery_attempt_rate_pct": 76.0,
   "cases": [
     {
       "case_id": "batch_sub_001",
       "category": "subscription_failure",
       "cause_category": "insufficient_funds",
       "matched_rule_id": "high_ltv_insufficient_funds",
-      "outcome": "actioned",
+      "outcome": "no_action",
       "cart_amount_inr": 1499,
       "customer_ltv_inr": 32000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 0,
+      "first_action_tool": null
     },
     {
       "case_id": "batch_sub_002",
@@ -74,7 +73,7 @@
       "cart_amount_inr": 2199,
       "customer_ltv_inr": 15000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 2,
       "first_action_tool": "generate_payment_link"
     },
     {
@@ -86,7 +85,7 @@
       "cart_amount_inr": 899,
       "customer_ltv_inr": 6000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 2,
       "first_action_tool": "generate_payment_link"
     },
     {
@@ -94,12 +93,12 @@
       "category": "subscription_failure",
       "cause_category": "invalid_card",
       "matched_rule_id": "card_problem",
-      "outcome": "no_action",
+      "outcome": "actioned",
       "cart_amount_inr": 1750,
       "customer_ltv_inr": 20000,
       "correction_count": 0,
-      "num_actions": 0,
-      "first_action_tool": null
+      "num_actions": 2,
+      "first_action_tool": "generate_payment_link"
     },
     {
       "case_id": "batch_sub_006",
@@ -133,8 +132,8 @@
       "outcome": "actioned",
       "cart_amount_inr": 1899,
       "customer_ltv_inr": 18000,
-      "correction_count": 0,
-      "num_actions": 1,
+      "correction_count": 1,
+      "num_actions": 3,
       "first_action_tool": "schedule_retry"
     },
     {
@@ -142,12 +141,12 @@
       "category": "subscription_failure",
       "cause_category": "issuer_down",
       "matched_rule_id": "transient_decline_any_customer",
-      "outcome": "actioned",
+      "outcome": "no_action",
       "cart_amount_inr": 799,
       "customer_ltv_inr": 5000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "schedule_retry"
+      "num_actions": 0,
+      "first_action_tool": null
     },
     {
       "case_id": "batch_sub_010",
@@ -170,7 +169,7 @@
       "cart_amount_inr": 1399,
       "customer_ltv_inr": 11000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 3,
       "first_action_tool": "schedule_retry"
     },
     {
@@ -202,12 +201,12 @@
       "category": "subscription_failure",
       "cause_category": "unknown",
       "matched_rule_id": "__default__",
-      "outcome": "actioned",
+      "outcome": "no_action",
       "cart_amount_inr": 1799,
       "customer_ltv_inr": 16000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 0,
+      "first_action_tool": null
     },
     {
       "case_id": "batch_sub_015",
@@ -230,7 +229,7 @@
       "cart_amount_inr": 699,
       "customer_ltv_inr": 4000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 2,
       "first_action_tool": "generate_payment_link"
     },
     {
@@ -254,8 +253,8 @@
       "cart_amount_inr": 2099,
       "customer_ltv_inr": 22000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 2,
+      "first_action_tool": "generate_payment_link"
     },
     {
       "case_id": "batch_sub_019",
@@ -266,7 +265,7 @@
       "cart_amount_inr": 1499,
       "customer_ltv_inr": 13000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 3,
       "first_action_tool": "schedule_retry"
     },
     {
@@ -286,12 +285,12 @@
       "category": "checkout_abandonment",
       "cause_category": "abandoned_checkout",
       "matched_rule_id": "checkout_abandonment_first_time",
-      "outcome": "actioned",
+      "outcome": "no_action",
       "cart_amount_inr": 2599,
       "customer_ltv_inr": 0,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 0,
+      "first_action_tool": null
     },
     {
       "case_id": "batch_checkout_002",
@@ -302,8 +301,8 @@
       "cart_amount_inr": 1899,
       "customer_ltv_inr": 5000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_payment_link"
     },
     {
       "case_id": "batch_checkout_003",
@@ -326,7 +325,7 @@
       "cart_amount_inr": 1450,
       "customer_ltv_inr": 9000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 2,
       "first_action_tool": "generate_payment_link"
     },
     {
@@ -350,7 +349,7 @@
       "cart_amount_inr": 799,
       "customer_ltv_inr": 3000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 2,
       "first_action_tool": "send_message"
     },
     {
@@ -358,36 +357,36 @@
       "category": "checkout_abandonment",
       "cause_category": "abandoned_checkout",
       "matched_rule_id": "checkout_abandonment_first_time",
-      "outcome": "actioned",
+      "outcome": "no_action",
       "cart_amount_inr": 6999,
       "customer_ltv_inr": 45000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "generate_payment_link"
+      "num_actions": 0,
+      "first_action_tool": null
     },
     {
       "case_id": "batch_checkout_008",
       "category": "checkout_abandonment",
       "cause_category": "abandoned_checkout",
       "matched_rule_id": "checkout_abandonment_first_time",
-      "outcome": "no_action",
+      "outcome": "actioned",
       "cart_amount_inr": 1699,
       "customer_ltv_inr": 8000,
       "correction_count": 0,
-      "num_actions": 0,
-      "first_action_tool": null
+      "num_actions": 2,
+      "first_action_tool": "send_message"
     },
     {
       "case_id": "batch_checkout_009",
       "category": "checkout_abandonment",
       "cause_category": "abandoned_checkout",
       "matched_rule_id": "checkout_abandonment_first_time",
-      "outcome": "actioned",
+      "outcome": "no_action",
       "cart_amount_inr": 650,
       "customer_ltv_inr": 15000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 0,
+      "first_action_tool": null
     },
     {
       "case_id": "batch_checkout_010",
@@ -418,12 +417,12 @@
       "category": "checkout_abandonment",
       "cause_category": "abandoned_checkout",
       "matched_rule_id": "checkout_abandonment_first_time",
-      "outcome": "actioned",
+      "outcome": "no_action",
       "cart_amount_inr": 1050,
       "customer_ltv_inr": 6000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 0,
+      "first_action_tool": null
     },
     {
       "case_id": "batch_checkout_013",
@@ -434,7 +433,7 @@
       "cart_amount_inr": 2350,
       "customer_ltv_inr": 19000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 2,
       "first_action_tool": "generate_payment_link"
     },
     {
@@ -446,7 +445,7 @@
       "cart_amount_inr": 1899,
       "customer_ltv_inr": 9500,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 2,
       "first_action_tool": "send_message"
     },
     {
@@ -454,12 +453,12 @@
       "category": "checkout_abandonment",
       "cause_category": "abandoned_checkout",
       "matched_rule_id": "checkout_abandonment_first_time",
-      "outcome": "no_action",
+      "outcome": "actioned",
       "cart_amount_inr": 2999,
       "customer_ltv_inr": 17000,
       "correction_count": 0,
-      "num_actions": 0,
-      "first_action_tool": null
+      "num_actions": 2,
+      "first_action_tool": "generate_payment_link"
     },
     {
       "case_id": "batch_receivable_001",
@@ -470,8 +469,8 @@
       "cart_amount_inr": 85000,
       "customer_ltv_inr": 150000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_002",
@@ -482,8 +481,8 @@
       "cart_amount_inr": 42000,
       "customer_ltv_inr": 95000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_003",
@@ -494,7 +493,7 @@
       "cart_amount_inr": 175000,
       "customer_ltv_inr": 220000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 3,
       "first_action_tool": "generate_split_payment_link"
     },
     {
@@ -506,7 +505,7 @@
       "cart_amount_inr": 28000,
       "customer_ltv_inr": 60000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 4,
       "first_action_tool": "generate_split_payment_link"
     },
     {
@@ -518,8 +517,8 @@
       "cart_amount_inr": 250000,
       "customer_ltv_inr": 310000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_006",
@@ -530,8 +529,8 @@
       "cart_amount_inr": 36000,
       "customer_ltv_inr": 75000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_007",
@@ -542,8 +541,8 @@
       "cart_amount_inr": 120000,
       "customer_ltv_inr": 180000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_008",
@@ -554,20 +553,20 @@
       "cart_amount_inr": 19500,
       "customer_ltv_inr": 45000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_009",
       "category": "receivable",
       "cause_category": "abandoned_checkout",
       "matched_rule_id": "b2b_receivable_split_payment",
-      "outcome": "no_action",
+      "outcome": "actioned",
       "cart_amount_inr": 210000,
       "customer_ltv_inr": 265000,
       "correction_count": 0,
-      "num_actions": 0,
-      "first_action_tool": null
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_010",
@@ -578,8 +577,8 @@
       "cart_amount_inr": 53000,
       "customer_ltv_inr": 88000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_011",
@@ -590,8 +589,8 @@
       "cart_amount_inr": 67000,
       "customer_ltv_inr": 130000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_012",
@@ -602,8 +601,8 @@
       "cart_amount_inr": 24000,
       "customer_ltv_inr": 52000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_013",
@@ -614,8 +613,8 @@
       "cart_amount_inr": 340000,
       "customer_ltv_inr": 410000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_014",
@@ -626,8 +625,8 @@
       "cart_amount_inr": 31000,
       "customer_ltv_inr": 71000,
       "correction_count": 0,
-      "num_actions": 1,
-      "first_action_tool": "send_message"
+      "num_actions": 3,
+      "first_action_tool": "generate_split_payment_link"
     },
     {
       "case_id": "batch_receivable_015",
@@ -638,7 +637,7 @@
       "cart_amount_inr": 142000,
       "customer_ltv_inr": 195000,
       "correction_count": 0,
-      "num_actions": 1,
+      "num_actions": 4,
       "first_action_tool": "generate_split_payment_link"
     }
   ]

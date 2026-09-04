@@ -69,9 +69,10 @@ Honest accounting — nothing here is aspirational.
 | Customer history (LTV, abandon count, cooldown) | Live, SQLite — LTV/opt-in are placeholders pending a real CRM |
 | 50-case batch (`data/batch_cases.json`) | Checkout-abandonment is fully real (real unpaid test-mode orders). Subscription-failure uses real orders with a modeled failure event (Razorpay test mode can't force a card decline outside the browser flow). Receivables are synthetic by design |
 | Chat UI (`/chat`) | Live — multi-turn, same agent loop and gate as the webhook pipeline; failure trigger is simulated in-process |
-| Voice channel (`/voice`) | verified live (text-simulated turns, and real Sarvam STT/TTS over WebRTC). Details: [`docs/voice.md`](docs/voice.md) |
+| Voice channel (`/voice`) | Text-simulated turns work everywhere, including the live deployment above. Real Sarvam STT/TTS over WebRTC and ringing a real phone via Plivo need local setup — see [Voice channel setup](#voice-channel-local-setup) below. Details: [`docs/voice.md`](docs/voice.md) |
 | Dashboard (`/dashboard`) | Live — batch metrics, live case list, per-case audit trail, activity feed, editable strategy config |
 | Hosting | Live on Vercel; storage auto-switches to Turso (libSQL) via `DATABASE_URL` since Vercel's filesystem is ephemeral |
+| WhatsApp delivery | Not built — superseded by the `/chat` and `/voice` web UIs so a judge doesn't need to install anything to see the agent talk to a customer |
 
 ## Quick start (local)
 
@@ -86,6 +87,44 @@ Open `http://localhost:8000/chat`, `/voice`, and `/dashboard`. `DATABASE_URL` is
 leave it blank and every store (webhook dedupe, customer history, audit trail, conversations,
 strategy config) runs on local SQLite/JSONL under `data/`, so the project runs from a clean
 clone with no external services.
+
+### Voice channel (local setup)
+
+`/voice` works out of the box with the steps above — type a customer's side of the call and
+it runs the real gate/dialogue/verify loop, same as the deployed site. Real audio and a real
+phone call both need extra setup, local-only (see [`docs/voice.md`](docs/voice.md) for why
+this doesn't run on Vercel).
+
+**Real speech over the browser (phase 2)**
+
+```bash
+pip install -e ".[voice]"
+```
+
+Add to `.env`: `SARVAM_API_KEY=` (get one at [sarvam.ai](https://www.sarvam.ai)). Restart
+`uvicorn`, open `/voice`, place a call, and click **Connect real audio (mic)** — grant the
+browser mic permission when prompted.
+
+**Ringing a real phone (phase 3, code-complete but not yet verified against a live call)**
+
+Additionally needs, all in `.env`:
+
+```
+PLIVO_AUTH_ID=
+PLIVO_AUTH_TOKEN=
+PLIVO_FROM_NUMBER=      # bought from console.plivo.com
+PUBLIC_BASE_URL=        # a public HTTPS URL Plivo can reach
+```
+
+Locally, `PUBLIC_BASE_URL` needs a tunnel since Plivo can't reach `localhost`:
+
+```bash
+ngrok http 8000
+```
+
+Copy the `https://` URL ngrok prints into `PUBLIC_BASE_URL`, restart `uvicorn`, then
+`POST /api/voice/start` followed by `POST /api/voice/{call_id}/dial-phone` with
+`{"to_number": "+91..."}` rings the number.
 
 ## Repo layout
 
