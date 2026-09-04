@@ -166,7 +166,19 @@ def _build_bridge(P: dict[str, Any]):
                     chat_client=client,
                     notify_channel=self._notify_channel,
                 )
-            except Exception:
+            except Exception as exc:
+                # Never end a live call silently - log what actually broke
+                # (was previously a bare EndFrame with no trace at all) and
+                # say something before hanging up rather than just going dead.
+                self._audit.log(
+                    self._call.case_id,
+                    "pipeline_error",
+                    {"call_id": self._call.call_id, "error": str(exc)},
+                )
+                await self.push_frame(
+                    TTSSpeakFrame("Sorry, I'm having trouble right now - goodbye."),
+                    FrameDirection.DOWNSTREAM,
+                )
                 await self.push_frame(EndFrame(), FrameDirection.DOWNSTREAM)
                 return
             finally:

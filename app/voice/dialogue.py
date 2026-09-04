@@ -41,6 +41,22 @@ _SPEAK_TOOL = {
 
 _DECLINE_WORDS = ("no", "don't", "do not", "not interested", "stop calling", "nope")
 
+# A live call going completely silent is the worst failure mode here - it
+# just sounds dead. Some models reason about the reply in plain text (or
+# emit nothing at all) instead of calling 'speak', the exact failure mode
+# app/agent.py already nudges once for on the text lane - carried over here
+# since the voice dialogue engine hit it live (real call, real model, no
+# tool call, no plain-text content either).
+_NO_SPEAK_NUDGE = "You did not call the 'speak' tool. Call it now with the exact words to say next."
+
+
+def _extract_reply(response: Any) -> tuple[Any, Any, str]:
+    speak_call = next((tc for tc in response.tool_calls if tc.name == "speak"), None)
+    action_call = next((tc for tc in response.tool_calls if tc.name != "speak"), None)
+    text = speak_call.arguments.get("text", "") if speak_call else (response.content or "")
+    return speak_call, action_call, text
+
+
 # A customer who goes quiet twice in a row gets a graceful close, not a
 # third silent question - matches lazarusV2's "nudge twice, then close"
 # idle-timeout shape (D7-06 in their session.py), just driven by explicit
@@ -156,10 +172,20 @@ class Dialogue:
 
         response = chat_client.chat(self._messages, tools=[_SPEAK_TOOL, *IN_CALL_TOOL_SCHEMAS])
         self._messages.append(response.raw_message)
+        speak_call, action_call, text = _extract_reply(response)
 
-        speak_call = next((tc for tc in response.tool_calls if tc.name == "speak"), None)
-        action_call = next((tc for tc in response.tool_calls if tc.name != "speak"), None)
-        text = speak_call.arguments.get("text", "") if speak_call else (response.content or "")
+        nudged = False
+        if not text.strip():
+            nudged = True
+            self._messages.append({"role": "user", "content": _NO_SPEAK_NUDGE})
+            response = chat_client.chat(self._messages, tools=[_SPEAK_TOOL, *IN_CALL_TOOL_SCHEMAS])
+            self._messages.append(response.raw_message)
+            speak_call, action_call, text = _extract_reply(response)
+            if not text.strip():
+                # Still nothing after one nudge - never let the call go
+                # silent. This line is generic on purpose: it's a genuine
+                # model-reliability fallback, not a scripted response.
+                text = "Sorry, could you say that again?"
 
         result = verify_utterance(
             text,
@@ -168,6 +194,8 @@ class Dialogue:
             never_say=tuple(self.policy.never_say),
         )
         meta: dict[str, Any] = {}
+        if nudged:
+            meta["nudged"] = True
         if not result.ok:
             meta["verifier"] = result.findings
             meta["blocked_text"] = text
