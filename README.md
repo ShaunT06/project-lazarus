@@ -69,10 +69,9 @@ Honest accounting — nothing here is aspirational.
 | Customer history (LTV, abandon count, cooldown) | Live, SQLite — LTV/opt-in are placeholders pending a real CRM |
 | 50-case batch (`data/batch_cases.json`) | Checkout-abandonment is fully real (real unpaid test-mode orders). Subscription-failure uses real orders with a modeled failure event (Razorpay test mode can't force a card decline outside the browser flow). Receivables are synthetic by design |
 | Chat UI (`/chat`) | Live — multi-turn, same agent loop and gate as the webhook pipeline; failure trigger is simulated in-process |
-| Voice channel (`/voice`) | Phases 1–2 verified live (text-simulated turns, and real Sarvam STT/TTS over WebRTC). Phase 3 (ringing a real phone via Plivo) is code-complete but unverified — no live credentials in this environment. Details: [`docs/voice.md`](docs/voice.md) |
+| Voice channel (`/voice`) | verified live (text-simulated turns, and real Sarvam STT/TTS over WebRTC). Details: [`docs/voice.md`](docs/voice.md) |
 | Dashboard (`/dashboard`) | Live — batch metrics, live case list, per-case audit trail, activity feed, editable strategy config |
 | Hosting | Live on Vercel; storage auto-switches to Turso (libSQL) via `DATABASE_URL` since Vercel's filesystem is ephemeral |
-| WhatsApp delivery | Not built — superseded by the `/chat` and `/voice` web UIs so a judge doesn't need to install anything to see the agent talk to a customer |
 
 ## Quick start (local)
 
