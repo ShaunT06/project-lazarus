@@ -139,7 +139,6 @@ def create_app(
             "<h1>Project Lazarus</h1>"
             "<p>AI-powered revenue recovery agent.</p>"
             "<a href='/chat'>Customer chat (Lazarus talking to a customer)</a>"
-            "<a href='/voice'>Voice call (Lazarus calling a customer)</a>"
             "<a href='/dashboard'>Merchant dashboard (audit &amp; metrics)</a>"
             "</body></html>"
         )
